@@ -1,0 +1,29 @@
+# docker-compose.yml
+# Objetivo: Arrancar dos instancias de Redis para comparar:
+# - redis-default: instancia sin config externa (comportamiento "por defecto")
+# - redis-tuned: instancia con redis.conf personalizado (AOF everysec, maxmemory, LRU, seguridad y observabilidad)
+# Nota: Usamos una misma version de Redis para aislar el efecto de "Configuration" y no mezclarlo con cambios de release.
+
+services:
+  redis-default:
+    image: redis:7.4-alpine                 # Imagen liviana
+    container_name: redis-default
+    ports:
+      - "6379:6379"                         # Exponemos 6379 para pruebas locales
+    # Sin volumes ni config externa: sirve de baseline
+    # En entorno real, NO expongas 0.0.0.0 sin auth; aquí es laboratorio.
+
+  redis-tuned:
+    image: redis:7.4-alpine                 # Misma versión que redis-default
+    container_name: redis-tuned
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]  # Cargamos el redis.conf
+    ports:
+      - "6380:6379"                         # Puerto alterno para comparar con facilidad
+    volumes:
+      - ./redis.conf.tuned:/usr/local/etc/redis/redis.conf:ro     # Montamos config de solo lectura
+      - redis_tuned_data:/data              # Persistencia para AOF y métricas
+    # En laboratorio usamos password simple; en prod: ACLs y TLS.
+    # Mismo host, mismas condiciones -> comparación justa
+
+volumes:
+  redis_tuned_data:                          # Volumen nombrado para persistencia (solo en tuned)

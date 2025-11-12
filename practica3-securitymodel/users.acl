@@ -1,0 +1,3 @@
+user default off
+user app on >appSecret123 ~* +@all -@admin -CONFIG -FLUSHALL -FLUSHDB -SHUTDOWN
+user ro on >readOnly123 ~* +@read

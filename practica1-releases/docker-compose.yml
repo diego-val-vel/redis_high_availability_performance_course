@@ -1,0 +1,43 @@
+# docker-compose.yml
+# Objetivo: Comparar Redis 6.2 (baseline) vs Redis 7.4 (candidata) en el MISMO host.
+# Notas:
+# - Usamos imagenes oficiales "alpine" por footprint reducido.
+# - Activamos AOF para validar persistencia.
+# - Red aislada "redislab" para evitar exposición innecesaria.
+# - No configuramos auth para simplificar la práctica en red local privada.
+#   AVISO: Docker Hub advierte que al exponer puertos el protected mode se desactiva,
+#   por eso usamos red dedicada y host controlado (no exposición pública). 
+#   Referencia: redis - Official Image | Docker Hub. 
+
+version: "3.9"
+
+services:
+  redis62:
+    image: redis:6.2-alpine              # Release baseline
+    container_name: retailco-redis-62
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"                      # Puerto local para pruebas
+    volumes:
+      - redis62_data:/data               # Persistencia para validar AOF
+    networks:
+      - redislab
+
+  redis74:
+    image: redis:7.4-alpine              # Release candidata (rama 7.4.x)
+    container_name: retailco-redis-74
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6380:6379"                      # Puerto alterno local para pruebas
+    volumes:
+      - redis74_data:/data
+    networks:
+      - redislab
+
+volumes:
+  redis62_data:
+  redis74_data:
+
+networks:
+  redislab:
+    driver: bridge

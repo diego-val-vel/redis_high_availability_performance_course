@@ -1,0 +1,92 @@
+# 1. crear y levantar los servicios
+docker compose up -d
+# arranca redis-insecure, redis-secure y tester
+# mapea 6379 para inseguro y 6380 para seguro
+
+/usr/bin/docker compose logs redis-secure --tail=200
+# muestra los últimos 200 logs del seguro para confirmar carga de configuración y ACL
+
+# 2. comprobar que ambos están ejecutándose
+docker ps
+# verifica que aparezcan redis-insecure y redis-secure con sus puertos
+
+# 3. probar el riesgo en redis-insecure (sin auth)
+docker exec -it tester redis-cli -h redis-insecure PING
+# debe responder PONG sin autenticación
+
+docker exec -it tester redis-cli -h redis-insecure SET demo "riesgo"
+# escribe sin autenticación, evidencia del problema
+
+docker exec -it tester redis-cli -h redis-insecure GET demo
+# lee sin autenticación
+
+# 4. probar autenticación obligatoria en redis-secure
+docker exec -it tester redis-cli -h redis-secure PING
+# debe fallar con un error de NOAUTH
+
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 PING
+# debe responder PONG usando el usuario app con su contraseña
+
+# 5. probar que app puede escribir y leer
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 SET k1 v1
+# debe devolver OK
+
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 GET k1
+# debe devolver "v1"
+
+# 6. probar que FLUSHALL está deshabilitado
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 FLUSHALL
+# debe devolver error de comando desconocido o no permitido
+
+# 7. probar usuario de solo lectura
+docker exec -it tester redis-cli -h redis-secure --user ro -a readOnly123 GET k1
+# debe devolver "v1", lectura permitida
+
+docker exec -it tester redis-cli -h redis-secure --user ro -a readOnly123 SET k2 v2
+# debe fallar con error de permisos, bloqueo tangible
+
+# 8. listar ACL para auditoría
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 ACL LIST
+# muestra definición de usuarios y permisos, útil para auditar
+
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 ACL GETUSER app
+# muestra los permisos efectivos del usuario app
+
+# 9. revisar slowlog y análisis de latencia
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 SLOWLOG GET 10
+# lista hasta 10 entradas de comandos que superaron 10 ms
+
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 LATENCY DOCTOR
+# imprime recomendaciones cuando detecta eventos de latencia
+
+# 10. verificar persistencia AOF y supervivencia tras reinicio del contenedor seguro
+docker exec -it redis-secure sh -lc 'ls -lah /data && [ -d /data/appendonlydir ] && echo "multi-AOF presente" || echo "multi-AOF no encontrado"'
+# muestra el directorio de datos y confirma el formato multi AOF
+
+docker restart redis-secure
+# reinicia el contenedor seguro
+
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 GET k1
+# debe seguir devolviendo "v1", demostrando persistencia
+
+# 11. prueba de desempeño rápida y comparativa
+docker exec -it tester redis-benchmark -h redis-insecure -q -n 200000 -c 50 -t get,set -d 50
+# referencia de throughput sin controles
+
+docker exec -it tester redis-benchmark -u redis://app:appSecret123@redis-secure:6379 -q -n 200000 -c 50 -t get,set -d 50
+# referencia con ACL usando URI (incluye usuario y contraseña); el costo extra debe ser pequeño en esta escala
+
+# 12. limpieza lógica de datos de prueba
+docker exec -it tester redis-cli -h redis-secure --user app -a appSecret123 DEL k1
+# elimina la clave de prueba en el servicio seguro
+
+docker exec -it tester redis-cli -h redis-insecure DEL demo
+# elimina la clave de prueba en el servicio inseguro
+
+# 13. apagar el entorno, conservar el volumen del seguro si quieres revisar luego
+docker compose down
+# elimina contenedores y red del proyecto
+
+# 14. opcional: borrar el volumen de datos del seguro si quieres estado cero
+docker volume ls | grep redis_secure_data
+# identifica el nombre real del volumen, con prefijo del proyecto

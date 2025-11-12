@@ -1,0 +1,90 @@
+############################################
+# redis.conf.tuned - Config orientada a HA/Performance (nivel principiante)
+############################################
+
+# Puerto por defecto de Redis
+port 6379
+
+# Aceptar conexiones en todas las interfaces (laboratorio controlado)
+bind 0.0.0.0
+
+# Modo protegido activado (no confíes solo en esto; es laboratorio)
+protected-mode yes
+
+# En Docker, el proceso debe ir en primer plano
+daemonize no
+
+# Ruta estándar del pidfile (no relevante en Docker foreground)
+pidfile /var/run/redis.pid
+
+############################################
+# [Seguridad mínima]
+############################################
+# Password simple de laboratorio (NO usar en producción)
+requirepass changeme123!
+
+# Consejo: en producción usar ACLs:
+# user default on >changeme123! ~* +@all
+
+############################################
+# [Persistencia: priorizamos AOF everysec]
+############################################
+# Activar AOF para durabilidad operativa básica
+appendonly yes
+
+# Equilibrio entre rendimiento y RPO ~1s
+appendfsync everysec
+
+# Desactivar snapshots RDB en este laboratorio (evita doble persistencia)
+save ""
+
+# Directorio de datos (Docker volume en servicio tuned)
+dir /data
+
+############################################
+# [Memoria y política de expulsión]
+############################################
+# Límite explícito para comportamiento predecible
+maxmemory 128mb
+
+# Expulsión LRU entre todas las claves (bueno para caché general)
+maxmemory-policy allkeys-lru
+
+############################################
+# [Networking y timeouts]
+############################################
+# No expirar conexiones inactivas (útil en pruebas)
+timeout 0
+
+# Mantener viva la conexión (segundos)
+tcp-keepalive 300
+
+############################################
+# [Observabilidad]
+############################################
+# Registrar comandos > 10ms (10000 microsegundos)
+slowlog-log-slower-than 10000
+
+# Mantener hasta 128 entradas del slowlog
+slowlog-max-len 128
+
+# Registrar eventos de latencia > 100ms (útil para picos)
+latency-monitor-threshold 100
+
+############################################
+# [Ajustes de I/O (opcionales)]
+############################################
+# Habilita 2 hilos para I/O de red (no paraleliza ejecución de comandos)
+io-threads 2
+
+# Permite que hilos manejen lecturas (reduce carga del hilo principal en I/O)
+io-threads-do-reads yes
+
+############################################
+# [Higiene de comandos peligrosos (opcional)]
+############################################
+# Deshabilitar FLUSHALL (deja vacío el nombre); comentar en laboratorio
+# rename-command FLUSHALL ""
+
+# Ídem FLUSHDB
+# rename-command FLUSHDB ""

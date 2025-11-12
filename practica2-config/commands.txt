@@ -1,0 +1,89 @@
+1) Arrancar ambas instancias
+docker compose up -d
+-- Crea y levanta redis-default (6379) y redis-tuned (6380) en segundo plano.
+
+-- Ver los logs del servicio en Compose (últimas 200 líneas)
+/usr/bin/docker compose logs redis-tuned --tail=200
+
+2) Ver que están corriendo
+docker ps
+-- Debes ver redis-default (6379->6379) y redis-tuned (6380->6379).
+
+3) Ver versión y modo de cada una (paridad de versión)
+docker exec -it redis-default redis-server --version
+-- Confirma versión de Redis (debe ser 7.4.x si usaste esa etiqueta).
+
+docker exec -it redis-tuned redis-server --version
+-- Debe coincidir (misma imagen) para que la comparación sea solo de configuración.
+
+4) Validar parámetros clave en redis-tuned (CONFIG GET)
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! CONFIG GET appendonly appendfsync save dir maxmemory maxmemory-policy slowlog-log-slower-than slowlog-max-len latency-monitor-threshold io-threads io-threads-do-reads'
+-- Debe devolver los valores establecidos en redis.conf.tuned.
+-- NOTA: escapamos el "!" en la shell con backslash.
+
+5) Comprobar persistencia AOF en redis-tuned
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! SET demo:aof "hola" && redis-cli -a changeme123\! GET demo:aof'
+-- Debe imprimir "hola" (OK).
+
+docker exec -it redis-tuned sh -lc 'ls -lah /data && find /data -maxdepth 1 -type d -name "appendonlydir" -print && find /data/appendonlydir -type f -maxdepth 1 2>/dev/null | wc -l'
+-- Verifica que existe /data/appendonlydir (AOF multi-parte) y cuenta archivos.
+
+docker restart redis-tuned
+-- Reinicia contenedor para validar durabilidad.
+
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! GET demo:aof'
+-- Debe seguir devolviendo "hola" (demuestra AOF activo con everysec).
+
+6) Validar límite de memoria y política de expulsión (redis-tuned)
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! CONFIG GET maxmemory maxmemory-policy'
+-- Debe mostrar 128mb y allkeys-lru.
+
+-- Inyectar carga de SET para llegar rápido al límite (claves pequeñas)
+docker exec -it redis-tuned sh -lc 'redis-benchmark -a changeme123\! -q -n 200000 -c 50 -t set -d 50'
+-- 200k SETs de 50 bytes, 50 conexiones. El objetivo es forzar el límite y ver expulsión.
+
+-- Ver cuántas claves quedaron y si hubo expulsión (DBSIZE y INFO stats)
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! DBSIZE && redis-cli -a changeme123\! INFO stats | egrep "evicted_keys|expired_keys"'
+-- Si ves "evicted_keys" creciendo, la política allkeys-lru se está aplicando.
+
+7) Observabilidad: Slowlog y Latency Monitor (redis-tuned)
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! SLOWLOG GET 10'
+-- Muestra últimas operaciones lentas (>10ms). Puede estar vacío; repite con carga si deseas.
+
+docker exec -it redis-tuned sh -lc 'redis-cli -a changeme123\! LATENCY DOCTOR'
+-- Muestra análisis de eventos >100ms. Útil para detectar picos o problemas del host.
+
+8) Comparación simple con redis-default (mismas pruebas básicas)
+docker exec -it redis-default redis-cli PING
+-- Debe responder PONG (sin password, baseline de laboratorio).
+
+docker exec -it redis-default redis-benchmark -q -n 200000 -c 50 -t set -d 50
+-- Ejecuta la misma presión de SET para comparar estabilidad.
+-- OJO: redis-default no tiene maxmemory; puede usar más RAM del host, comportándose "rápido" hasta que la memoria/FS empiece a estresar.
+
+9) Validación de parámetros por INFO
+docker exec -it redis-default redis-cli INFO persistence | head -n 20
+-- Muestra estado de AOF/RDB. En default, usualmente AOF desactivado.
+docker exec -it redis-tuned   sh -lc 'redis-cli -a changeme123\! INFO persistence | head -n 20'
+-- Debe mostrar AOF "enabled" y fsync everysec.
+
+10) Limpieza lógica (claves) opcional
+docker exec -it redis-tuned   sh -lc 'redis-cli -a changeme123\! FLUSHALL'
+-- Elimina claves de redis-tuned (laboratorio, cuidado en producción).
+docker exec -it redis-default redis-cli FLUSHALL
+-- Limpia redis-default.
+
+11) Apagar el entorno (pero conservar volúmenes por si quieres revisar)
+docker compose down
+-- Detiene y elimina contenedores y red (si la hubiera). Volúmenes nombrados persisten.
+
+12) Borrar el volumen de redis-tuned si quieres "estado cero"
+docker volume ls | grep redis_tuned_data
+-- Identifica el volumen creado por Compose.
+
+docker volume rm practica-config_redis_tuned_data  Ajusta el prefijo según tu carpeta/proyecto
+-- Borra el volumen; si el nombre difiere, usa el que muestra `docker volume ls`.
+
+13) (Opcional) Borrar imágenes para recuperar espacio
+docker rmi redis:7.4-alpine
+-- Se volverá a descargar si repites la práctica.

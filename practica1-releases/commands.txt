@@ -1,0 +1,98 @@
+1) Levantar ambos servicios en segundo plano
+docker compose up -d
+-- Crea red, volúmenes y arranca redis62 y redis74.
+
+2) Comprobar que ambos contenedores están corriendo
+docker ps
+-- Debes ver retailco-redis-62 (6379->6379) y retailco-redis-74 (6380->6379).
+
+3) Ver versiones exactas del binario de cada contenedor
+docker exec -it retailco-redis-62 redis-server --version
+-- Muestra version Redis 6.2.x, compilador y jemalloc.
+
+docker exec -it retailco-redis-74 redis-server --version
+-- Muestra version Redis 7.4.x exacta (verificar rama candidata).
+
+4) Verificar via INFO server (forma scriptable de inspeccion)
+docker exec -it retailco-redis-62 redis-cli INFO server | head -n 20
+-- Observa 'redis_version', 'os', etc.
+
+docker exec -it retailco-redis-74 redis-cli INFO server | head -n 20
+-- Compara 'redis_version' con 7.4.x.
+
+5) Medir latencia en reposo (idle) durante 5 segundos
+docker exec -it retailco-redis-62 redis-cli --latency -i 1 -c 5
+-- Reporta RTT promedio y p95 aprox. No es benchmark formal pero es tangible.
+
+docker exec -it retailco-redis-74 redis-cli --latency -i 1 -c 5
+-- Compara resultados con 6.2.x en las mismas condiciones.
+
+6) Medir memoria base al arranque
+docker exec -it retailco-redis-62 sh -lc 'redis-cli INFO memory | egrep "used_memory_human|allocator"'
+-- Huella base y allocador. Registra valores.
+
+docker exec -it retailco-redis-74 sh -lc 'redis-cli INFO memory | egrep "used_memory_human|allocator"'
+-- Compara con 6.2.x. Idealmente no debe subir notablemente.
+
+7) Prueba funcional con AOF y persistencia
+docker exec -it retailco-redis-74 redis-cli SET retailco:release:test "redis-7.4"
+-- Inserta una clave en la candidata.
+
+docker exec -it retailco-redis-74 redis-cli GET retailco:release:test
+-- Debe retornar "redis-7.4" confirmando escritura.
+
+docker exec -it retailco-redis-74 sh -lc 'ls -lh /data && tail -n 10 /data/appendonly.aof || true'
+-- Verifica que AOF existe y contiene el SET.
+
+docker restart retailco-redis-74
+-- Reinicia el contenedor sin borrar el volumen.
+
+docker exec -it retailco-redis-74 redis-cli GET retailco:release:test
+-- Debe persistir "redis-7.4", probando supervivencia con AOF 'everysec'.
+
+8) Carga ligera y medible (opcion A: redis-benchmark)
+docker exec -it retailco-redis-62 redis-benchmark -q -n 20000 -c 50 -t get,set
+-- -n 20000: 20k operaciones totales, -c 50: 50 conexiones concurrentes, operaciones GET/SET.
+-- Guarda resultados: req/s y latencias (stdout). Esto ES tangible.
+
+docker exec -it retailco-redis-74 redis-benchmark -q -n 20000 -c 50 -t get,set
+-- Ejecuta igual para comparabilidad. Compara req/s y latencias.
+
+8-b) Carga ligera y medible (opcion B: insercion 10k via --pipe)
+docker exec -it retailco-redis-62 sh -lc 'for i in $(seq 1 10000); do echo -en "*3\r\n$3\r\nSET\r\n$7\r\nr62:${i}\r\n$7\r\nv62:${i}\r\n"; done | redis-cli --pipe'
+-- Inserta 10k claves a 6.2.x rapidamente usando protocolo RESP.
+
+docker exec -it retailco-redis-62 redis-cli DBSIZE
+-- Verifica que los 10k (o mas) estan presentes.
+
+docker exec -it retailco-redis-74 sh -lc 'for i in $(seq 1 10000); do echo -en "*3\r\n$3\r\nSET\r\n$7\r\nr74:${i}\r\n$7\r\nv74:${i}\r\n"; done | redis-cli --pipe'
+-- Inserta 10k en 7.4.x. Misma tecnica.
+
+docker exec -it retailco-redis-74 redis-cli DBSIZE
+-- Verifica conteo de claves.
+
+9) Re-medir latencia idle despues de “calentar” (opcional)
+docker exec -it retailco-redis-62 redis-cli --latency -i 1 -c 5
+-- Observa si cambió sensiblemente.
+
+docker exec -it retailco-redis-74 redis-cli --latency -i 1 -c 5
+-- Compara con 6.2.x.
+
+10) Limpieza logica de claves de prueba (para no contaminar otras corridas)
+docker exec -it retailco-redis-62 redis-cli FLUSHALL
+-- O usar patrones de DEL si compartes DB (en laboratorio usamos FLUSHALL).
+
+docker exec -it retailco-redis-74 redis-cli FLUSHALL
+-- Limpia DB de la candidata.
+
+11) Apagar entorno de laboratorio (manteniendo evidencia en volúmenes si quieres)
+docker compose down
+-- Elimina contenedores y red; conserva volúmenes.
+
+12) (Opcional) Borrar volúmenes para reiniciar desde cero en otra corrida
+docker volume rm redis62_data redis74_data
+-- Borra datos persistidos del laboratorio.
+
+13) (Opcional) Borrar imagenes para recuperar espacio
+docker rmi redis:6.2-alpine redis:7.4-alpine
+-- Se re-descargaran si vuelves a levantar el compose.

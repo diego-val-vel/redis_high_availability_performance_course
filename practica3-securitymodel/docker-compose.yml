@@ -1,0 +1,37 @@
+# docker-compose.yml
+# Objetivo: levantar dos instancias para comparar seguridad.
+# redis-insecure: sin controles, solo para contraste.
+# redis-secure: controles mínimos efectivos con ACL, modo protegido y comandos peligrosos deshabilitados.
+# Incluye un contenedor utilitario "tester" para ejecutar redis-cli dentro de la misma red.
+
+services:
+  redis-insecure:
+    image: redis:7.4-alpine                       # misma versión que el servicio seguro
+    container_name: redis-insecure
+    ports:
+      - "6379:6379"                               # exposición intencional para ver el riesgo en local
+    # sin volumen ni configuración externa
+    # solo de referencia, no usar en producción
+
+  redis-secure:
+    image: redis:7.4-alpine
+    container_name: redis-secure
+    command: ["redis-server", "/usr/local/etc/redis/redis.secure.conf"]  # cargar config segura
+    ports:
+      - "6380:6379"                               # puerto distinto para contrastar con facilidad
+    volumes:
+      - ./redis.secure.conf:/usr/local/etc/redis/redis.secure.conf:ro    # config de solo lectura
+      - ./users.acl:/usr/local/etc/redis/users.acl:ro                    # archivo ACL de solo lectura
+      - redis_secure_data:/data                                          # persistencia
+    # el servicio corre en la misma red default del proyecto
+    # en un entorno real usarías una red dedicada y reglas de firewall
+
+  tester:
+    image: redis:7.4-alpine
+    container_name: tester
+    entrypoint: [ "sleep", "infinity" ]           # contenedor utilitario para correr redis-cli bajo demanda
+    depends_on:
+      - redis-secure
+
+volumes:
+  redis_secure_data:
