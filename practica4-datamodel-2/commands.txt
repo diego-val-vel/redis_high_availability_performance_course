@@ -1,0 +1,142 @@
+===
+0. INSERTS (escrituras) con claves bien diseñadas
+===
+
+
+
+-- STRING con TTL (sesión)
+
+# Inserta una sesión: clave con SID, valor con dueño de la sesión (user:101), expira en 15 min
+docker compose exec -T redis redis-cli SET "quicknotes:session:{sid-xyz}" "user:101" EX 900
+
+/*
+	- ¿Por qué así?
+	- Clave: quicknotes:session:{sid-xyz} separa app, recurso y el ID de sesión dentro de {}.
+	- Valor: string simple que indica “quién es el dueño” de la sesión.
+	- TTL: las sesiones deben caducar.
+*/
+
+
+
+-- HASH (perfil del usuario)
+
+# Inserta/actualiza perfil completo dentro de UN hash (sin multiplicar claves)
+docker compose exec -T redis redis-cli HSET "quicknotes:user:{101}" name "Nadia" email "nadia@example.com" plan "pro" country "mx"
+
+/*
+	- ¿Por qué así?
+	- Un solo hash por usuario concentra atributos.
+	- Clave con {101} para co-ubicar todo lo del usuario 101.
+	- Evita claves “campo por campo”.
+*/
+
+
+
+-- LIST (timeline: notas recientes)
+
+# Inserta 3 notas al frente (recientes primero)
+docker compose exec -T redis redis-cli LPUSH "quicknotes:user:{101}:notes" "Idea A" "Idea B" "Idea C"
+
+/*
+	- ¿Por qué así?
+	- :notes deja claro que es una colección de notas.
+	- LPUSH modela recencia: lo último entra primero.
+*/
+
+
+
+-- SET (etiquetas únicas)
+
+# Inserta etiquetas sin duplicados
+docker compose exec -T redis redis-cli SADD "quicknotes:user:{101}:tags" "work" "ideas" "quick"
+
+/*
+	- ¿Por qué así?
+	- SET garantiza unicidad; no repites tags.
+	- :tags expresa semántica clara de colección.
+*/
+
+
+
+-- ZSET (ranking global)
+
+# Inserta puntuaciones; un ranking global por productividad
+docker compose exec -T redis redis-cli ZADD "quicknotes:rank:productivity" 42 "user:101" 15 "user:202" 80 "user:303"
+
+/*
+	- ¿Por qué así?
+	- Ranking global no depende de un usuario; por eso no hay {id} en la clave.
+	- ZSET ordena por score y permite top-N directo.
+*/
+
+
+
+===
+1. SELECTS (lecturas) correspondientes
+===
+
+
+
+-- STRING (sesión)
+
+# Recupera al dueño de la sesión
+docker compose exec -T redis redis-cli GET "quicknotes:session:{sid-xyz}"
+
+# Verifica segundos restantes de vida de la sesión
+docker compose exec -T redis redis-cli TTL "quicknotes:session:{sid-xyz}"
+
+/*
+	- Lectura esperada
+	GET -> user:101
+	TTL -> entero > 0
+*/
+
+
+
+-- HASH (perfil)
+
+# Lee campos puntuales (SELECT columnas)
+docker compose exec -T redis redis-cli HMGET "quicknotes:user:{101}" name plan
+
+/*
+	- Lectura esperada
+	HMGET -> "Nadia" "pro"
+*/
+
+
+
+-- LIST (notas recientes)
+
+# Lee top 2 recientes (como SELECT ... ORDER BY created_at DESC LIMIT 2)
+docker compose exec -T redis redis-cli LRANGE "quicknotes:user:{101}:notes" 0 1
+
+/*
+	- Lectura esperada
+	LRANGE -> ["Idea C","Idea B"] (C es la más reciente porque LPUSH)
+*/
+
+
+
+-- SET (etiquetas)
+
+# Comprueba pertenencia y lista tags
+docker compose exec -T redis redis-cli SISMEMBER "quicknotes:user:{101}:tags" "ideas"
+docker compose exec -T redis redis-cli SMEMBERS "quicknotes:user:{101}:tags"
+
+/*
+	- Lectura esperada
+	SISMEMBER -> 1
+	SMEMBERS -> conjunto con ideas, work, quick (orden no garantizado)
+*/
+
+
+
+-- ZSET (ranking)
+
+# Top 3 descendente con puntuación
+docker compose exec -T redis redis-cli ZREVRANGE "quicknotes:rank:productivity" 0 2 WITHSCORES
+
+/*
+	- Lectura esperada
+	ZREVRANGE -> user:303 80, user:101 42, user:202 15
+*/

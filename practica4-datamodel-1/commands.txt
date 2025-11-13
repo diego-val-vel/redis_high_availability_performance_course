@@ -1,8 +1,12 @@
+-- A) Preparación
+
 # Seleccionar la base por claridad (DB 0)
 docker compose exec -T redis redis-cli SELECT 0
 
 # Ver llaves previas de quicknotes (SCAN paginado, NO bloquea)
 docker compose exec -T redis redis-cli SCAN 0 MATCH "quicknotes:*" COUNT 100
+
+-- B) STRING + TTL: sesión del usuario
 
 # Crear una sesión para el usuario uid=101 con TTL de 20 min (1200s)
 docker compose exec -T redis redis-cli SET "quicknotes:session:{sid-abc}" "user:101" EX 1200
@@ -16,6 +20,8 @@ docker compose exec -T redis redis-cli TTL "quicknotes:session:{sid-abc}"
 # Extender a 45 min
 docker compose exec -T redis redis-cli EXPIRE "quicknotes:session:{sid-abc}" 2700
 
+-- C) HASH: perfil del usuario
+
 # Crear/actualizar perfil de user 101
 docker compose exec -T redis redis-cli HSET "quicknotes:user:{101}" name "Nadia" email "nadia@example.com" plan "free" country "mx"
 
@@ -27,6 +33,8 @@ docker compose exec -T redis redis-cli HSET "quicknotes:user:{101}" plan "pro"
 
 # Ver perfil completo
 docker compose exec -T redis redis-cli HGETALL "quicknotes:user:{101}"
+
+-- D) LIST: últimas notas (timeline personal)
 
 # Insertar 3 notas recientes al inicio (más nuevas primero)
 docker compose exec -T redis redis-cli LPUSH "quicknotes:user:{101}:notes" "Comprar filtros café" "Anotar ideas de la reunión" "Probar flujo de atajos"
@@ -40,6 +48,8 @@ docker compose exec -T redis redis-cli LTRIM "quicknotes:user:{101}:notes" 0 49
 # Consumir (borrar) la más antigua cuando limpie su bandeja
 docker compose exec -T redis redis-cli RPOP "quicknotes:user:{101}:notes"
 
+-- E) SET: etiquetas únicas del usuario
+
 # Agregar etiquetas únicas
 docker compose exec -T redis redis-cli SADD "quicknotes:user:{101}:tags" "work" "ideas" "personal"
 
@@ -51,6 +61,8 @@ docker compose exec -T redis redis-cli SREM "quicknotes:user:{101}:tags" "person
 
 # Ver todas las etiquetas
 docker compose exec -T redis redis-cli SMEMBERS "quicknotes:user:{101}:tags"
+
+-- F) ZSET: ranking simple de productividad
 
 # Asignar puntos a usuarios en el ranking
 docker compose exec -T redis redis-cli ZADD "quicknotes:rank:productivity" 30 "user:101" 15 "user:202" 50 "user:303"
@@ -64,11 +76,15 @@ docker compose exec -T redis redis-cli ZINCRBY "quicknotes:rank:productivity" 8 
 # Posición actual (0 es el mejor)
 docker compose exec -T redis redis-cli ZREVRANK "quicknotes:rank:productivity" "user:101"
 
+-- G) Exploración segura y nombres
+
 # Inspeccionar todo lo de un usuario específico con SCAN (paginado)
 docker compose exec -T redis redis-cli SCAN 0 MATCH "quicknotes:user:{101}:*" COUNT 50
 
 # ADVERTENCIA: KEYS bloquea. Evitar en producción. Solo laboratorio:
 # docker compose exec -T redis redis-cli KEYS "quicknotes:*"
+
+-- I) Limpieza del entorno del ejercicio
 
 # Borrado de todas las llaves quicknotes:* (seguro, iterativo)
 docker compose exec -T redis sh -lc 'redis-cli --scan --pattern "quicknotes:*" | xargs -r redis-cli DEL'
