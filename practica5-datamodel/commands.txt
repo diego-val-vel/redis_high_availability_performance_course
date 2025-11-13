@@ -1,0 +1,201 @@
+-- Preparación
+
+# Seleccionar base 0
+docker compose exec -T redis redis-cli SELECT 0
+
+# Explorar sin bloquear (ver si ya hay llaves del ejercicio)
+docker compose exec -T redis redis-cli SCAN 0 MATCH "alerts:*" COUNT 100
+
+-- Redis wire protocol en 1 minuto
+-- Opción A con netcat si está disponible en tu contenedor. Si no está, salta a Opción B.
+
+# Opción A: enviar un PING en RESP a mano. Si "nc" no existe, omite esta parte.
+docker compose exec -T redis sh -lc 'printf "*1\r\n\$4\r\nPING\r\n" | nc 127.0.0.1 6379'
+# Esperado: +PONG
+
+-- Opción B con redis-cli para ver comandos en vivo
+
+# Abre un monitor para ver lo que el server recibe (útil para entender tráfico)
+docker compose exec -T redis redis-cli MONITOR
+# En otra terminal, haz: docker compose exec -T redis redis-cli PING
+# Verás en el MONITOR la línea con "PING"
+
+-- Modelo de datos mínimo para alertas
+
+/*
+	Convención de claves:
+
+	alerts:seq STRING contador global de alertas
+	alerts:{type}:list LIST últimas N alertas por tipo
+	alerts:{type}:last HASH última alerta por tipo (para lectura rápida)
+	alerts:recent LIST ring buffer global recortado
+	alerts:pub canal Pub/Sub para notificaciones en tiempo real
+*/
+
+-- Inserts seguros con TTL y recorte
+
+# Crear o inicializar contador global de alertas si no existe
+docker compose exec -T redis redis-cli SETNX "alerts:seq" 0
+
+# Publicar y guardar una alerta de tipo "payment" con TTL en la vista "last"
+# 1) Incrementa el id global (atómico)
+docker compose exec -T redis redis-cli INCR "alerts:seq"
+
+# 2) Prepara un objeto simple en HASH como "última alerta" para lectura inmediata
+docker compose exec -T redis redis-cli HSET "alerts:{payment}:last" id "1" level "warn" msg "saldo bajo" ts "1731360000"
+
+# 3) Opcional: expiración de la "vista last" para no perpetuar info vieja (ej 10 min)
+docker compose exec -T redis redis-cli EXPIRE "alerts:{payment}:last" 600
+
+# 4) Guardar la alerta en la lista "por tipo", recientes primero
+docker compose exec -T redis redis-cli LPUSH "alerts:{payment}:list" "1|warn|saldo bajo|1731360000"
+
+# 5) Mantener solo las últimas 100 por tipo
+docker compose exec -T redis redis-cli LTRIM "alerts:{payment}:list" 0 99
+
+# 6) Guardar también en la lista global "recent" para dashboards
+docker compose exec -T redis redis-cli LPUSH "alerts:recent" "payment|1|warn|saldo bajo|1731360000"
+docker compose exec -T redis redis-cli LTRIM "alerts:recent" 0 499
+
+# 7) Notificar en tiempo real por Pub/Sub
+docker compose exec -T redis redis-cli PUBLISH "alerts:pub" "payment|1|warn|saldo bajo|1731360000"
+
+-- Lecturas rápidas (SELECTs)
+
+# Obtener la última alerta de "payment" como pares campo/valor (lectura puntual)
+docker compose exec -T redis redis-cli HGETALL "alerts:{payment}:last"
+
+# Obtener top 5 recientes por tipo
+docker compose exec -T redis redis-cli LRANGE "alerts:{payment}:list" 0 4
+
+# Obtener top 5 globales
+docker compose exec -T redis redis-cli LRANGE "alerts:recent" 0 4
+
+-- Pub/Sub en dos terminales
+-- Terminal 1 suscriptor:
+
+# Suscribirse al canal de alertas en tiempo real
+docker compose exec -T redis redis-cli SUBSCRIBE "alerts:pub"
+
+-- Terminal 2 publicador:
+
+# Publicar una nueva alerta (recibirás el mensaje en la otra terminal)
+docker compose exec -T redis redis-cli PUBLISH "alerts:pub" "refund|2|info|reembolso iniciado|1731360060"
+
+-- Transacciones y Lua para atomicidad
+-- A) WATCH + MULTI + EXEC para contador por tipo
+
+# Queremos incrementar un contador por tipo de alerta solo si la secuencia global no cambió.
+# 1) Vigilar la clave de secuencia
+docker compose exec -T redis redis-cli WATCH "alerts:seq"
+
+# 2) Leer el valor actual de seq (simula lógica de app)
+docker compose exec -T redis redis-cli GET "alerts:seq"
+
+# 3) Inicia transacción
+docker compose exec -T redis redis-cli MULTI
+
+# 4) Incremento por tipo "payment" (pendiente hasta EXEC)
+docker compose exec -T redis redis-cli INCR "alerts:{payment}:count"
+
+# 5) Ejecuta transacción (si "alerts:seq" fue modificada por otros entre WATCH y EXEC, fallará)
+docker compose exec -T redis redis-cli EXEC
+
+-- B) Script Lua que guarda y publica en un solo paso
+
+# Script que: LPUSH en recent, LTRIM, y PUBLISH un mensaje. Todo atómico.
+docker compose exec -T redis redis-cli EVAL '
+  local msg = ARGV[1]
+  redis.call("LPUSH", "alerts:recent", msg)
+  redis.call("LTRIM", "alerts:recent", 0, 499)
+  redis.call("PUBLISH", "alerts:pub", msg)
+  return "OK"
+' 0 "inventory|3|crit|stock agotado|1731360120"
+
+-- Qué hacer si tu cliente no trae un comando
+-- A) Primero valida en redis-cli
+
+# Ver documentación de un comando (ayuda rápida)
+docker compose exec -T redis redis-cli COMMAND DOCS INCR
+
+-- B) Si tu SDK no expone COMMAND DOCS o MODULE LIST, usa Lua como wrapper
+
+# Invocar un CLIENT INFO via Lua (ejemplo de wrapper cuando el cliente no expone un comando)
+docker compose exec -T redis redis-cli EVAL 'return redis.call("CLIENT","INFO")' 0
+
+/*
+	C) Alternativas
+
+	Actualiza el SDK a versión que soporte el comando.
+
+	Abre issue en el repositorio del cliente.
+
+	Usa un comando alterno o un script Lua que encapsule la semántica.
+
+	Por qué algunos comandos no aparecen en clientes
+
+	Seguridad: comandos como DEBUG, FLUSHALL pueden estar escondidos por diseño.
+
+	Compatibilidad: el cliente no alcanzó la versión del server.
+
+	Política del proveedor: eliminan APIs que no consideran “safe”.
+	Cómo proceder:
+
+	Verifica en redis-cli que el comando existe y su versión.
+
+	Si es seguro, usa Lua wrapper temporal.
+
+	Evita comandos bloqueantes o peligrosos en producción.
+*/
+
+-- Módulos externos
+-- A) Listar módulos cargados
+
+# Muestra módulos cargados actualmente (lo normal en redis:7-alpine es que esté vacío)
+docker compose exec -T redis redis-cli MODULE LIST
+
+
+-- B) Cómo probar módulos sin romper tu compose original
+-- Opción segura: crear un override temporal para un entorno de laboratorio aparte.
+
+# docker-compose.override.yml de laboratorio para módulos (ejemplo)
+services:
+  redis:
+    image: redis/redis-stack-server:7.4.0-v0
+    container_name: redis-m1m3
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+/*
+	Con redis-stack tienes RedisJSON, Bloom, Search listos. Beneficios típicos:
+
+	RedisJSON: documentos JSON con JSON.GET/SET.
+
+	Bloom/CF: filtros probabilísticos para reducir I/O en cachés y prevención de duplicados masivos.
+	Nota de HA y rendimiento:
+
+	Antes de usar módulos en producción, valida impacto en memoria y CPU, planes de actualización, y soporte de tu plataforma de failover.
+*/
+
+-- Consistencia en alta disponibilidad
+-- Lecturas en réplica pueden retrasarse. Para confirmar propagación tras escribir:
+
+# Espera a que N réplicas confirmen la escritura o timeout. Útil tras un write crítico antes de responder al cliente.
+docker compose exec -T redis redis-cli SET "alerts:ack:test" "ok"
+docker compose exec -T redis redis-cli WAIT 1 2000
+
+-- Para “read-your-writes” inmediato, lee del primario o usa WAIT antes de leer.
+
+-- Exploración segura, nunca bloquees
+
+# SCAN paginado por todo el espacio de "alerts"
+docker compose exec -T redis redis-cli SCAN 0 MATCH "alerts:*" COUNT 200
+
+# ADVERTENCIA: no usar KEYS en producción
+# docker compose exec -T redis redis-cli KEYS "alerts:*"
+
+-- Limpieza del ejercicio
+
+# Borrado iterativo seguro de todas las llaves del ejercicio
+docker compose exec -T redis sh -lc 'redis-cli --scan --pattern "alerts:*" | xargs -r redis-cli DEL'
