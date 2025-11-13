@@ -1,0 +1,375 @@
+-- Paso 1: Benchmarking básico (Benchmarking Redis)
+
+# Ejecutar un benchmark básico de GET y SET con 10,000 operaciones
+docker exec -it redis-m1m3 redis-benchmark -t get,set -n 10000 -q
+
+/*
+	Comentarios:
+
+		redis-benchmark: herramienta que viene con Redis para probar rendimiento.
+		-t get,set: prueba solo comandos GET y SET.
+		-n 10000: ejecuta 10,000 operaciones en total.
+		-q: salida abreviada.
+
+	Esto te dará algo como:
+
+		SET: X requests per second
+		GET: Y requests per second
+
+	Este es tu rendimiento base, sin pipelining agresivo y con carga moderada.
+*/
+
+
+
+-- Probamos pipelining en el benchmark.
+
+# Ejecutar benchmark de SET con pipelining de 50 comandos por lote
+docker exec -it redis-m1m3 redis-benchmark -t set -n 50000 -P 50 -q
+
+/*
+	Comentarios:
+
+		-n 50000: 50,000 operaciones.
+		-P 50: tamaño del pipeline, 50 comandos en cada lote.
+		Verás que las operaciones por segundo aumentan notablemente comparado con el benchmark sin -P.
+
+	Con esto cubrimos:
+
+		Benchmarking básico.
+		Efecto del pipelining en el throughput.
+*/
+
+
+
+-- Paso 2: Inserción masiva simple (Mass insertion + Pipelining)
+
+/*
+	Vamos a simular carga de sesiones de usuarios:
+
+		Clave: session:<id>
+		Valor: un string JSON simple (podría ser cualquier string).
+
+	Ejemplo con redis-benchmark para insertar claves session:<random>:
+*/
+
+# Cargar 100,000 claves tipo session:* con pipelining
+docker exec -it redis-m1m3 redis-benchmark \
+  -t set \
+  -n 100000 \
+  -r 100000 \
+  -p 6379 \
+  -q \
+  -k 1 \
+  -P 50 \
+  -d 50
+
+/*
+	Explicación de los parámetros:
+
+	-t set: solo SET.
+	-n 100000: 100,000 operaciones SET.
+	-r 100000: usa claves aleatorias en el rango 0 a 99,999.
+
+	Las claves serán similares a: key:1234.
+
+	-k 1: reutiliza claves aleatorias en cada operación, generando muchas claves distribuidas.
+	-P 50: pipelining de 50 comandos.
+	-d 50: tamaño del valor de 50 bytes.
+
+	Aunque las claves no se llaman session:* en este comando, la idea es que estás creando un dataset similar en tamaño y distribución. Si quisieras personalizar el prefijo de las claves, podrías usar otras herramientas, pero para este ejercicio está bien así.
+
+	Este paso ilustra:
+
+	- Inserción masiva usando pipelining.
+	- Impacto potencial en el master.
+*/
+
+
+
+-- Paso 3: Commands to avoid y latencia.
+
+/*
+	Ahora vamos a usar Redis de forma interactiva para ver comandos peligrosos.
+	Entrar a redis-cli:
+*/
+
+# Abrir un cliente interactivo de Redis
+docker exec -it redis-m1m3 redis-cli
+
+
+- Dentro de redis-cli:
+
+# Probar PING para verificar conectividad
+PING
+
+-- Respuesta esperada: PONG.
+
+/*
+Ahora, supón que quieres saber cuántas claves hay.
+
+Primer intento: usar KEYS *.
+*/
+
+# (MALA PRACTICA) listar todas las claves con KEYS
+KEYS *
+
+/*
+	Comentarios:
+
+	Este comando recorre TODO el espacio de claves.
+	En un entorno grande, puede bloquear el servidor por muchos milisegundos o segundos.
+	Si tienes muchos clientes, todos se ven afectados.
+	Alternativa correcta: usar SCAN.
+*/
+
+# (BUENA PRACTICA) usar SCAN para iterar sin bloquear
+SCAN 0 COUNT 100
+
+/*
+	SCAN 0 devuelve un cursor y un subconjunto de claves.
+
+	COUNT 100 pide hasta 100 claves en ese escaneo.
+
+	La respuesta te da:
+
+	El siguiente cursor (para continuar iterando si no es "0").
+	Un pequeño lote de claves.
+	Teóricamente, esto reduce el bloqueo del event loop.
+*/
+
+
+
+
+-- SLOWLOG y LATENCY
+
+Queremos ver cómo detectar comandos lentos.
+
+En redis-cli:
+
+# Ver configuración actual del slowlog (tiempo mínimo en microsegundos)
+CONFIG GET slowlog-log-slower-than
+
+# Listar las entradas actuales de SLOWLOG (comandos lentos ejecutados)
+SLOWLOG GET
+
+Si se hubiera ejecutado KEYS con un dataset ya grande, aparecería aquí con el tiempo que tardó.
+
+
+
+
+
+-- Herramientas de latencia:
+
+# Ver resumen de problemas de latencia
+LATENCY DOCTOR
+
+Cuando haya eventos significativos (fork lento, etc.), aparecerán aquí. Para esta práctica con pocos datos y máquina local, puede que no veas eventos fuertes, pero conoces la herramienta.
+
+Esto cubre:
+
+Commands to avoid (ejemplo KEYS vs SCAN).
+
+Primer contacto con Debugging latency problems (SLOWLOG y LATENCY).
+
+
+
+
+
+
+
+
+-- Paso 4: Problemas con DEL en estructuras grandes (Problems with big DEL requests - what to use instead)
+
+Vamos a crear una estructura grande y borrarla de dos formas:
+
+Usando DEL (bloqueante).
+
+Usando UNLINK (borrado asíncrono).
+
+Dentro de redis-cli, crea una lista grande:
+
+# Crear una lista de prueba grande llamada big:list:demo
+DEL big:list:demo        # borrar cualquier lista previa con ese nombre, por limpieza
+
+# Insertar 100,000 elementos en la lista big:list:demo
+# (Este bucle es conceptual; puedes simularlo vía script, aquí explicamos la idea)
+
+
+En la práctica real, mejor hacerlo desde bash:
+
+# Crear una lista grande empujando 100,000 elementos
+for i in $(seq 1 100000); do
+  # Insertar al inicio de la lista big:list:demo el valor "item-<i>"
+  docker exec -it redis-m1m3 redis-cli LPUSH big:list:demo "item-$i" >/dev/null
+done
+
+Explicación:
+
+Estamos simulando una lista muy grande para ver el efecto del borrado.
+
+Ahora, medir el tiempo de DEL:
+
+# Medir el tiempo que tarda un DEL sobre la lista grande
+docker exec -it redis-m1m3 redis-cli \
+  --latency-history \
+  DEL big:list:demo
+
+
+Una forma más simple es usar el comando TIME antes y después, pero lo importante conceptualmente:
+
+DEL recorre y libera toda la memoria de los 100,000 elementos en el hilo principal.
+
+Ahora recreamos la lista y usamos UNLINK:
+
+# Volver a crear la lista grande
+for i in $(seq 1 100000); do
+  docker exec -it redis-m1m3 redis-cli LPUSH big:list:demo "item-$i" >/dev/null
+done
+
+# Borrar la lista grande usando UNLINK (borrado asíncrono)
+docker exec -it redis-m1m3 redis-cli UNLINK big:list:demo
+
+
+/*
+	Comentarios:
+
+	UNLINK solo desconecta la clave del diccionario principal y encola la liberación de memoria.
+	El cliente recibe la respuesta más rápido.
+	La memoria se libera en segundo plano, reduciendo el bloqueo.
+	Relacionándolo con alta disponibilidad:
+	Un DEL gigante puede bloquear el servidor y provocar:
+	Timeouts en clientes.
+	Posibles failovers innecesarios si se usan Sentinel/Cluster.
+	UNLINK reduce ese riesgo.
+*/
+
+
+
+
+
+-- Paso 5: Debugging memory overuse (diagnóstico de memoria) + Memory optimization tips
+
+Ahora revisamos la memoria del servidor, y damos algunos ajustes de modelo de datos.
+
+Entra a redis-cli si no estás dentro:
+
+# 19. Abrir redis-cli para inspección de memoria
+docker exec -it redis-m1m3 redis-cli
+
+
+Dentro de redis-cli:
+
+# Ver información de memoria general
+INFO MEMORY
+
+
+/*
+	Comentarios:
+
+	used_memory: memoria usada por los datos.
+	used_memory_rss: memoria reservada al proceso por el sistema operativo.
+	maxmemory: límite (si está configurado; por defecto puede no estarlo).
+	Ratio de fragmentación y otros datos.
+*/
+
+
+
+
+Ahora vamos a ver el tamaño aproximado de una clave:
+
+Primero creamos un hash de perfil de usuario optimizado:
+
+# Crear un perfil de usuario con hash (modelo más eficiente)
+HSET user:1001 name "Alice" age "30" country "MX"
+
+
+/*
+	Comentarios:
+
+	En vez de tener 3 claves separadas (user:1001:name, user:1001:age, etc.), usamos un hash.
+	Esto puede ahorrar memoria gracias a la representación compacta de hashes pequeños.
+*/
+
+Medimos la memoria:
+
+# Ver cuánta memoria consume la clave user:1001
+MEMORY USAGE user:1001
+
+Verás un tamaño en bytes.
+
+Si compararas con 3 claves string independientes, verías un uso mayor.
+
+Para detectar claves grandes globalmente (en la vida real):
+
+# Buscar claves grandes en la base (conceptual, cuidado en entornos muy grandes)
+docker exec -it redis-m1m3 redis-cli --bigkeys
+
+
+/*
+	Comentarios:
+
+	--bigkeys recorre el dataset y reporta las claves más grandes por tipo.
+	Es útil para debugging de memoria, pero hay que usarlo con cuidado en bases enormes, porque recorre todo.
+	Tips de optimización de memoria, aplicados al ejercicio:
+
+	Claves cortas:
+	En vez de user_session_profile:123456:preferences, usar algo como usr:prefs:123456.
+	Cada caracter ahorrado cuenta cuando tienes millones de claves.
+	Hashes en lugar de múltiples strings:
+	Ya aplicamos user:1001 con hash.
+	Esto reduce overhead de claves.
+*/
+
+
+TTL en datos temporales:
+
+Para sesiones:
+
+# Crear una sesión de usuario con expiración de 30 minutos
+SET session:abc123 "{...json...}" EX 1800
+
+
+-- EX 1800 indica 1800 segundos de TTL.
+Así liberas memoria automáticamente para sesiones caducadas.
+Evitar almacenar payloads gigantes sin necesidad:
+Comprimir JSON grande en la aplicación antes de guardarlo.
+O almacenar solo los campos realmente necesarios en Redis y el resto en otro sistema.
+
+-- Relacionándolo con alta disponibilidad:
+Un uso de memoria menor y controlado:
+Hace los forks de RDB/AOF más rápidos y seguros.
+Reduce riesgo de swapping.
+Facilita tener réplicas con la misma huella de memoria.
+Evita errores de OOM que afectarían todo el clúster.
+
+
+
+
+
+-- Paso 6: RedisInsight como apoyo visual
+
+Abre tu navegador y visita:
+
+http://localhost:5540
+
+/*
+	Comentarios:
+	RedisInsight te pedirá configurar una conexión.
+
+	Usa:
+	Host: redis o localhost según cómo accedas. Desde tu máquina, normalmente localhost y puerto 6379.
+
+	Puedes:
+	Ver la lista de claves generadas.
+	Ver estadísticas de memoria.
+	Ver latencias y comandos ejecutados.
+
+	Esto hace más intuitivo entender:
+	¿Cuántas claves hay?
+	¿Cuánta memoria se usa?
+	¿Qué comandos son más frecuentes?
+	Usarlo complementa:
+	Benchmarking.
+	Debugging de latencia.
+	Debugging de memoria.
+*/
