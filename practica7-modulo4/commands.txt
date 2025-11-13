@@ -1,228 +1,4 @@
-Objetivo del ejercicio
-
-Configurar, observar y modificar una instancia de Redis ejecutándose en Docker para:
-
-Probar distintos mecanismos de persistencia (RDB, AOF, sin persistencia).
-
-Entender cómo ciertas decisiones afectan rendimiento, durabilidad y desgaste de SSD.
-
-Practicar backup y restore de los archivos de datos de Redis.
-
-Explorar el contenido de la base con comandos seguros y con RedisInsight.
-
-Ver la idea de análisis de dumps (RDB/AOF) a nivel conceptual.
-
-Ajustar parámetros que afectan la durabilidad vs el rendimiento.
-
-Cambiar entre modos RDB y AOF.
-
-Probar una instancia sin persistencia como ejemplo de Redis "diskless".
-
-Revisar parámetros del sistema operativo relevantes para Redis (a nivel conceptual).
-
-Monitorear métricas básicas de Redis para entender su performance.
-
-Todo en un solo escenario práctico, pero dividido en fases claras.
-
-Planteamiento del problema
-
-La situación es la siguiente:
-
-Tu equipo va a poner en producción un servicio de Redis llamado "redis-m1m3".
-Este servicio será usado por varias aplicaciones:
-
-Una parte como cache de datos de consulta.
-
-Otra parte para guardar sesiones de usuarios.
-
-Y otra parte para guardar contadores de operaciones importantes.
-
-La dirección de TI te pide:
-
-Garantizar que Redis esté configurado con una estrategia de persistencia razonable para alta disponibilidad y buen rendimiento.
-
-Demostrar que puedes:
-
-Hacer backups de los datos de Redis.
-
-Restaurar los datos en caso de fallo.
-
-Explorar el contenido de la base sin impactar el rendimiento.
-
-Monitorear que el sistema se mantiene sano.
-
-Probar tres modos operativos:
-
-a) Redis con AOF como persistencia principal.
-b) Redis con RDB (snapshots) como persistencia principal.
-c) Redis sin persistencia, solo memoria (modo cache puro).
-
-Mostrar qué tipo de parámetros del sistema operativo y de Redis tendrías que revisar en un entorno real para evitar:
-
-Que el servidor se quede sin memoria.
-
-Que el SSD sufra desgaste excesivo.
-
-Que la latencia se dispare durante snapshots.
-
-Tu tarea en este ejercicio es configurar ese entorno, hacer algunas operaciones básicas y documentar mentalmente (y con comandos) lo que pasa en cada caso.
-
-Análisis detallado (qué vamos a hacer y por qué)
-
-Vamos a dividir el ejercicio en fases. Cada fase toca varios de los subtemas del módulo 4.
-
-Fase 0: Preparación del entorno
-
-Crear un archivo docker-compose con Redis + RedisInsight.
-
-Subir el entorno.
-
-Confirmar que Redis está accesible.
-
-Subtemas que ya tocamos aquí:
-
-Available persistence mechanisms: en esta primera versión vamos a usar AOF activado desde la línea de comando.
-
-OS-level tunables relevant for Redis: de forma conceptual, comentaremos qué habría que revisar en el host (aunque no lo cambiemos).
-
-Fase 1: Redis con AOF (modo típico para buena durabilidad)
-
-Insertar datos de ejemplo (sesiones y contadores).
-
-Ver dónde se guardan los archivos de persistencia (AOF y posible RDB).
-
-Hacer un backup manual del archivo AOF desde el host.
-
-Simular un fallo borrando el contenedor y el volumen.
-
-Restaurar los datos a partir del backup.
-
-Subtemas cubiertos:
-
-Available persistence mechanisms (AOF).
-
-Backup and restore.
-
-Precautions to avoid SSD wearout (discutiremos impacto de AOF).
-
-Tools for exploring database contents (redis-cli y RedisInsight).
-
-Tools for dump analysis (viendo tamaño de AOF y su rol).
-
-Fase 2: Tuning durability vs performance y switching entre AOF y RDB
-
-Modificar el docker compose para que Redis use principalmente RDB.
-
-Comparar a nivel conceptual el impacto de:
-
-RDB vs AOF en I/O.
-
-Frecuencia de snapshots.
-
-Simular un cambio de estrategia:
-
-Pasar de AOF a RDB.
-
-Pasar de RDB a AOF.
-
-Subtemas cubiertos:
-
-Tuning durability vs performance.
-
-Switching between RDB and AOF.
-
-Precautions to avoid SSD wearout (configuración de snapshots).
-
-Fase 3: Use case de Redis sin persistencia (diskless data)
-
-Modificar el docker compose para que Redis no tenga RDB ni AOF.
-
-Insertar datos.
-
-Reiniciar el contenedor y comprobar que los datos se pierden.
-
-Subtemas cubiertos:
-
-Use cases for diskless Redis.
-
-Available persistence mechanisms (modo sin persistencia).
-
-Fase 4: Monitoreo y OS-level tunables
-
-Ejecutar comandos INFO en Redis para ver métricas clave.
-
-Revisar a nivel conceptual parámetros del sistema operativo:
-
-swap
-
-overcommit_memory
-
-THP (Transparent Huge Pages)
-
-límites de archivos (ulimit)
-
-Comentar cómo integrar Redis con un sistema de monitoreo externo o ver métricas en RedisInsight.
-
-Subtemas cubiertos:
-
-OS-level tunables relevant for Redis.
-
-Monitoring Redis performance.
-
-Con este plan, todos los temas quedan cubiertos en un solo ejercicio secuencial.
-
-Solución paso a paso (con comandos y explicaciones detalladas)
-
-Voy a usar rutas genéricas. Ajusta las rutas a tu máquina si lo necesitas.
-
-##############################
-Fase 0: Preparación del entorno
-##############################
-
-Paso 0.1. Crear el archivo docker-compose
-
-Crea un archivo llamado, por ejemplo:
-
-/home/student/redis_ha_m4/docker-compose.yml
-
-Con el siguiente contenido (versión para AOF):
-
-services:
-  redis:
-    image: redis:7-alpine
-    container_name: redis-m1m3
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-  redisinsight:
-    image: redis/redisinsight:latest
-    container_name: redis-insight
-    ports:
-      - "5540:5540"
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-volumes:
-  redis_data:
-
-
-Explicación rápida:
-
-redis: servicio principal, usa redis:7-alpine.
-
-command: arranca redis-server con AOF activado (--appendonly yes).
-
-volumes: redis_data se monta en /data, donde Redis guarda AOF/RDB.
-
-redisinsight: interfaz gráfica para explorar Redis.
-
-Paso 0.2. Levantar el entorno
-
+-- Levantar el entorno
 # Cambia al directorio donde está el archivo docker-compose.yml
 cd /home/student/redis_ha_m4
 
@@ -232,54 +8,54 @@ cd /home/student/redis_ha_m4
 # Verifica que los contenedores estén corriendo
 /usr/bin/docker ps
 
+/*
+  Comentarios:
 
-Comentarios:
+  cd /home/student/redis_ha_m4
+  Cambia al directorio que contiene el archivo docker-compose.yml.
 
-cd /home/student/redis_ha_m4
-Cambia al directorio que contiene el archivo docker-compose.yml.
+  /usr/bin/docker compose up -d
+  Levanta los servicios definidos en docker-compose.yml en modo "detached" (en segundo plano).
 
-/usr/bin/docker compose up -d
-Levanta los servicios definidos en docker-compose.yml en modo "detached" (en segundo plano).
+  /usr/bin/docker ps
+  Lista los contenedores en ejecución para verificar que redis-m1m3 y redis-insight estén levantados.
+*/
 
-/usr/bin/docker ps
-Lista los contenedores en ejecución para verificar que redis-m1m3 y redis-insight estén levantados.
 
-Paso 0.3. Probar conexión a Redis
+
+-- Probar conexión a Redis
 
 # Conexión a Redis dentro del contenedor redis-m1m3
 /usr/bin/docker exec -it redis-m1m3 redis-cli ping
 
+/*
+  Comentarios:
 
-Comentarios:
+  /usr/bin/docker exec -it redis-m1m3 redis-cli ping
+  Ejecuta redis-cli dentro del contenedor redis-m1m3 y envía el comando PING, que debe responder PONG si Redis está activo.
 
-/usr/bin/docker exec -it redis-m1m3 redis-cli ping
-Ejecuta redis-cli dentro del contenedor redis-m1m3 y envía el comando PING, que debe responder PONG si Redis está activo.
+  Hasta aquí ya tenemos Redis corriendo con AOF activado y RedisInsight listo.
+*/
 
-Hasta aquí ya tenemos Redis corriendo con AOF activado y RedisInsight listo.
 
-##############################
-Fase 1: Redis con AOF – persistencia, backup y restore
-##############################
 
-La idea es:
+-- Fase 1: Redis con AOF – persistencia, backup y restore
 
-Crear algunos datos en Redis.
+/*
+  La idea es:
 
-Ver dónde se guarda el AOF.
+  Crear algunos datos en Redis.
+  Ver dónde se guarda el AOF.
+  Hacer backup del AOF.
+  Borrar el entorno y restaurarlo usando el backup.
+*/
 
-Hacer backup del AOF.
-
-Borrar el entorno y restaurarlo usando el backup.
-
-Paso 1.1. Insertar datos de ejemplo
-
-Entramos al redis-cli dentro del contenedor:
+-- Insertar datos de ejemplo. Entramos al redis-cli dentro del contenedor:
 
 # Abrir una sesión interactiva de redis-cli dentro del contenedor
 /usr/bin/docker exec -it redis-m1m3 redis-cli
 
-
-Dentro de redis-cli, ejecuta:
+-- Dentro de redis-cli, ejecuta:
 
 # Crear una sesión de usuario con datos básicos
 SET session:1001 "user_id=1001;logged_in=true"
@@ -299,59 +75,89 @@ LPUSH user:1001:actions "login" "view_dashboard" "buy_product"
 # Ver cuántos elementos tiene la lista de acciones
 LLEN user:1001:actions
 
-
-Comentarios uno por uno:
-
-SET session:1001 "user_id=1001;logged_in=true"
-Crea una clave que representa la sesión del usuario 1001. Útil para ver persistencia de sesiones.
-
-INCR orders:counter
-Crea o incrementa un contador de pedidos. Sirve como ejemplo de dato de negocio que no queremos perder.
-
-INCRBY orders:counter 5
-Incrementa el contador en 5, simulando varias operaciones.
-
-SET user:1001:profile "{nombre: 'Ana', plan: 'premium'}" EX 3600
-Crea un perfil de usuario con expiración de 3600 segundos. Aquí mezclamos persistencia con TTL (modo cache).
-
-LPUSH user:1001:actions "login" "view_dashboard" "buy_product"
-Inserta elementos al inicio de la lista de acciones del usuario.
-
-LLEN user:1001:actions
-Verifica cuántos elementos hay en la lista, solo para confirmar que la escritura se hizo.
-
-Sal del redis-cli con:
-
 # Salir de redis-cli
 QUIT
 
+/*
+  Comentarios uno por uno:
 
-Paso 1.2. Ver el archivo AOF en el host
+  SET session:1001 "user_id=1001;logged_in=true"
+  Crea una clave que representa la sesión del usuario 1001. Útil para ver persistencia de sesiones.
 
-Ahora vamos a buscar el archivo AOF en el sistema de archivos del contenedor:
+  INCR orders:counter
+  Crea o incrementa un contador de pedidos. Sirve como ejemplo de dato de negocio que no queremos perder.
+
+  INCRBY orders:counter 5
+  Incrementa el contador en 5, simulando varias operaciones.
+
+  SET user:1001:profile "{nombre: 'Ana', plan: 'premium'}" EX 3600
+  Crea un perfil de usuario con expiración de 3600 segundos. Aquí mezclamos persistencia con TTL (modo cache).
+
+  LPUSH user:1001:actions "login" "view_dashboard" "buy_product"
+  Inserta elementos al inicio de la lista de acciones del usuario.
+
+  LLEN user:1001:actions
+  Verifica cuántos elementos hay en la lista, solo para confirmar que la escritura se hizo.
+*/
+
+
+
+-- Ver el archivo AOF en el host. Ahora vamos a buscar el archivo AOF en el sistema de archivos del contenedor:
 
 # Ver el contenido del directorio /data dentro del contenedor (ahí vive AOF/RDB)
 /usr/bin/docker exec -it redis-m1m3 ls -lah /data
 
+/*
+  Comentarios:
 
-Comentarios:
+  /usr/bin/docker exec -it redis-m1m3 ls -lah /data
+  Lista los archivos en /data donde Redis guarda sus archivos persistentes. Aquí deberías ver un archivo como appendonly.aof y quizá dump.rdb.
 
-/usr/bin/docker exec -it redis-m1m3 ls -lah /data
-Lista los archivos en /data donde Redis guarda sus archivos persistentes. Aquí deberías ver un archivo como appendonly.aof y quizá dump.rdb.
+  Ese directorio /data está mapeado al volumen redis_data en el host.
+*/
 
-Ese directorio /data está mapeado al volumen redis_data en el host.
 
-Paso 1.3. Simular un backup del AOF
 
-El volumen redis_data es manejado por Docker. Vamos a copiar el archivo AOF desde el contenedor hacia el host como "backup lógico":
 
-Primero identificamos el nombre del archivo AOF (normalmente appendonly.aof):
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- Simular un backup del AOF
+
+/*
+  El volumen redis_data es manejado por Docker. Vamos a copiar el archivo AOF desde el contenedor hacia el host como "backup lógico":
+  Primero identificamos el nombre del archivo AOF (normalmente appendonly.aof):
+*/
 
 # Verifica el nombre del archivo AOF en /data
 /usr/bin/docker exec -it redis-m1m3 ls /data
 
-
-Supongamos que el archivo se llama appendonly.aof. Hacemos el backup:
+-- Supongamos que el archivo se llama appendonly.aof. Hacemos el backup:
 
 # Crear un directorio de backups en el host
 mkdir -p /home/student/redis_ha_m4/backups
@@ -359,18 +165,21 @@ mkdir -p /home/student/redis_ha_m4/backups
 # Copiar el archivo AOF desde el contenedor al host como backup
 /usr/bin/docker cp redis-m1m3:/data/appendonly.aof /home/student/redis_ha_m4/backups/appendonly_backup.aof
 
+/*
+  Comentarios:
 
-Comentarios:
+  mkdir -p /home/student/redis_ha_m4/backups
+  Crea un directorio donde vamos a almacenar backups de Redis.
 
-mkdir -p /home/student/redis_ha_m4/backups
-Crea un directorio donde vamos a almacenar backups de Redis.
+  /usr/bin/docker cp redis-m1m3:/data/appendonly.aof /home/student/redis_ha_m4/backups/appendonly_backup.aof
+  Copia el archivo AOF desde el contenedor al host. Esto es un backup manual que puedes guardar en otro disco o nube.
+*/
 
-/usr/bin/docker cp redis-m1m3:/data/appendonly.aof /home/student/redis_ha_m4/backups/appendonly_backup.aof
-Copia el archivo AOF desde el contenedor al host. Esto es un backup manual que puedes guardar en otro disco o nube.
 
-Paso 1.4. Simular un desastre: borrar contenedor y volumen
 
-Vamos a suponer que el servidor tuvo un problema y perdimos el contenedor y su volumen:
+
+-- Simular un desastre: borrar contenedor y volumen
+-- Vamos a suponer que el servidor tuvo un problema y perdimos el contenedor y su volumen:
 
 # Apagar y eliminar los servicios definidos en docker compose
 cd /home/student/redis_ha_m4
@@ -379,36 +188,36 @@ cd /home/student/redis_ha_m4
 # Eliminar el volumen de datos de Redis para simular pérdida completa de disco
 /usr/bin/docker volume rm redis_ha_m4_redis_data
 
+/*
+  Comentarios:
 
-Comentarios:
+  /usr/bin/docker compose down
+  Detiene y elimina los contenedores creados por este docker compose.
 
-/usr/bin/docker compose down
-Detiene y elimina los contenedores creados por este docker compose.
+  /usr/bin/docker volume rm redis_ha_m4_redis_data
+  Elimina el volumen donde estaban los datos. Esto simula la pérdida total de datos en disco para esta instancia.
 
-/usr/bin/docker volume rm redis_ha_m4_redis_data
-Elimina el volumen donde estaban los datos. Esto simula la pérdida total de datos en disco para esta instancia.
+  Nota: el nombre del volumen puede variar según el proyecto. Usa /usr/bin/docker volume ls si necesitas confirmar el nombre.
 
-Nota: el nombre del volumen puede variar según el proyecto. Usa /usr/bin/docker volume ls si necesitas confirmar el nombre.
+  -- Restaurar Redis usando el backup de AOF
 
-Paso 1.5. Restaurar Redis usando el backup de AOF
+  Plan:
+  Levantar de nuevo el entorno.
+  Copiar el backup AOF desde el host al nuevo volumen (nuevo /data).
+  Verificar que los datos regresan.
+*/
 
-Plan:
 
-Levantar de nuevo el entorno.
 
-Copiar el backup AOF desde el host al nuevo volumen (nuevo /data).
-
-Verificar que los datos regresan.
-
-Primero levantamos el entorno otra vez:
+-- Primero levantamos el entorno otra vez:
 
 # Levantar nuevamente los servicios (volumen nuevo)
 /usr/bin/docker compose up -d
 
-
-El volumen redis_data será recreado vacío.
-
-Ahora copiamos el backup al contenedor:
+/*
+  El volumen redis_data será recreado vacío.
+  Ahora copiamos el backup al contenedor:
+*/
 
 # Copiar el backup AOF desde el host hacia el contenedor
 /usr/bin/docker cp /home/student/redis_ha_m4/backups/appendonly_backup.aof redis-m1m3:/data/appendonly.aof
@@ -416,16 +225,19 @@ Ahora copiamos el backup al contenedor:
 # Reiniciar Redis para que cargue el archivo AOF restaurado
 /usr/bin/docker restart redis-m1m3
 
+/*
+  Comentarios:
 
-Comentarios:
+  /usr/bin/docker cp ... redis-m1m3:/data/appendonly.aof
+  Sobrescribe el archivo AOF vacío (o inexistente) en /data con el backup.
 
-/usr/bin/docker cp ... redis-m1m3:/data/appendonly.aof
-Sobrescribe el archivo AOF vacío (o inexistente) en /data con el backup.
+  /usr/bin/docker restart redis-m1m3
+  Reinicia el contenedor para que Redis arranque leyendo el AOF que acabamos de poner.
+*/
 
-/usr/bin/docker restart redis-m1m3
-Reinicia el contenedor para que Redis arranque leyendo el AOF que acabamos de poner.
 
-Verificamos si las claves siguen ahí:
+
+-- Verificamos si las claves siguen ahí:
 
 # Entrar otra vez a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -445,26 +257,24 @@ LLEN user:1001:actions
 # Salir de redis-cli
 QUIT
 
+/*
+  Si ves valores correctos, validaste un ciclo completo de:
+  Persistencia con AOF.
+  Backup y restore de archivos.
+*/
 
-Si ves valores correctos, validaste un ciclo completo de:
 
-Persistencia con AOF.
 
-Backup y restore de archivos.
+-- Fase 2: Cambiar entre AOF y RDB y hablar de tuning
 
-Aquí ya tocamos varios subtemas del módulo.
+/*
+  En esta fase no vamos a hacer un benchmark formal, pero sí vamos a tocar la configuración para ver cómo se cambiaría la estrategia de persistencia.
 
-##############################
-Fase 2: Cambiar entre AOF y RDB y hablar de tuning
-##############################
+  Primero, actualizamos el docker-compose para usar RDB como mecanismo principal.
+*/
 
-En esta fase no vamos a hacer un benchmark formal, pero sí vamos a tocar la configuración para ver cómo se cambiaría la estrategia de persistencia.
-
-Primero, actualizamos el docker-compose para usar RDB como mecanismo principal.
-
-Paso 2.1. Versión RDB del docker-compose
-
-Edita el archivo /home/student/redis_ha_m4/docker-compose.yml para que quede así en esta fase:
+-- Versión RDB del docker-compose
+-- Edita el archivo /home/student/redis_ha_m4/docker-compose.yml para que quede así en esta fase:
 
 services:
   redis:
@@ -494,16 +304,17 @@ services:
 volumes:
   redis_data:
 
+/*
+  Explicación de los parámetros:
 
-Explicación de los parámetros:
+  --appendonly no
+  Desactiva AOF.
 
---appendonly no
-Desactiva AOF.
+  --save 60 1000
+  Configura RDB para guardar un snapshot si hubo al menos 1000 cambios en los últimos 60 segundos. Es un ejemplo relativamente moderado.
+*/
 
---save 60 1000
-Configura RDB para guardar un snapshot si hubo al menos 1000 cambios en los últimos 60 segundos. Es un ejemplo relativamente moderado.
-
-Aplicamos este cambio:
+-- Aplicamos este cambio:
 
 # Apagar el entorno actual
 cd /home/student/redis_ha_m4
@@ -515,8 +326,7 @@ cd /home/student/redis_ha_m4
 # Levantar el entorno con la configuración nueva basada en RDB
 /usr/bin/docker compose up -d
 
-
-Paso 2.2. Insertar datos en modo RDB y forzar un snapshot
+-- Insertar datos en modo RDB y forzar un snapshot
 
 # Entrar a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -532,7 +342,7 @@ BGSAVE
 # Salir de redis-cli
 QUIT
 
-
+/*
 Comentarios:
 
 SET rdb:test:...
@@ -540,41 +350,40 @@ Solo son claves de prueba para que haya algo que guardar.
 
 BGSAVE
 Ordena a Redis que lance un proceso en segundo plano para generar un archivo RDB con el estado actual de la base.
+*/
 
-Verificamos el archivo:
+-- Verificamos el archivo:
 
 # Ver archivos en /data (debería existir dump.rdb)
 /usr/bin/docker exec -it redis-m1m3 ls -lah /data
 
+/*
+  Aquí se ve cómo en este modo la persistencia se basa en snapshots RDB, no en un log de cambios.
 
-Aquí se ve cómo en este modo la persistencia se basa en snapshots RDB, no en un log de cambios.
+  Paso 2.3. Analizar a nivel conceptual el tuning durabilidad vs rendimiento
 
-Paso 2.3. Analizar a nivel conceptual el tuning durabilidad vs rendimiento
+  Con esto ya podemos razonar:
 
-Con esto ya podemos razonar:
+  En AOF:
+  Cada comando de escritura se registra.
+  Más I/O, mejor RPO (pierdes poco).
 
-En AOF:
+  En RDB:
+  Solo snapshots periódicos.
+  Menos I/O, peor RPO si los snapshots son poco frecuentes.
 
-Cada comando de escritura se registra.
+  También podrías:
+  Ajustar --save a reglas más agresivas.
 
-Más I/O, mejor RPO (pierdes poco).
+  Rehabilitar AOF con:
+  --appendonly yes --appendfsync everysec
+*/
 
-En RDB:
 
-Solo snapshots periódicos.
 
-Menos I/O, peor RPO si los snapshots son poco frecuentes.
+-- Si quisieras cambiar otra vez a AOF, la command quedaría, por ejemplo:
 
-También podrías:
-
-Ajustar --save a reglas más agresivas.
-
-Rehabilitar AOF con:
-
---appendonly yes --appendfsync everysec
-
-Si quisieras cambiar otra vez a AOF, la command quedaría, por ejemplo:
-
+/*
 command:
   [
     "redis-server",
@@ -583,18 +392,19 @@ command:
     "--save", "300", "10000"
   ]
 
-
 Eso sería una combinación híbrida: RDB poco frecuente + AOF con everysec.
+*/
 
-##############################
-Fase 3: Redis sin persistencia (modo cache)
-##############################
 
+
+-- Redis sin persistencia (modo cache)
+
+/*
 Ahora vamos a probar el caso donde Redis no debe persistir nada.
+Nueva configuración sin RDB ni AOF
+*/
 
-Paso 3.1. Nueva configuración sin RDB ni AOF
-
-Modifica de nuevo el docker-compose.yml:
+-- Modifica de nuevo el docker-compose.yml:
 
 services:
   redis:
@@ -625,15 +435,19 @@ volumes:
   redis_data:
 
 
-Explicación:
+/*
+  Explicación:
 
---appendonly no
-AOF desactivado.
+  --appendonly no
+  AOF desactivado.
 
---save ""
-Sin reglas de save, por lo que no se generarán snapshots RDB.
+  --save ""
+  Sin reglas de save, por lo que no se generarán snapshots RDB.
+*/
 
-Aplicamos los cambios:
+
+
+-- Aplicamos los cambios:
 
 # Apagar el entorno actual
 cd /home/student/redis_ha_m4
@@ -646,7 +460,8 @@ cd /home/student/redis_ha_m4
 /usr/bin/docker compose up -d
 
 
-Paso 3.2. Probar la pérdida de datos tras reinicio
+
+-- Probar la pérdida de datos tras reinicio
 
 # Entrar a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -663,13 +478,15 @@ GET nopersist:test:2
 QUIT
 
 
-Ahora reinicia el contenedor:
+
+-- Ahora reinicia el contenedor:
 
 # Reiniciar el contenedor de Redis
 /usr/bin/docker restart redis-m1m3
 
 
-Vuelve a revisar:
+
+-- Vuelve a revisar:
 
 # Entrar de nuevo a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -681,23 +498,23 @@ GET nopersist:test:2
 # Salir de redis-cli
 QUIT
 
+/*
+  Si todo está bien configurado, estas claves ya no existirán.
+  Esto demuestra el caso de uso de Redis como cache puro sin persistencia.
+*/
 
-Si todo está bien configurado, estas claves ya no existirán.
-Esto demuestra el caso de uso de Redis como cache puro sin persistencia.
 
-##############################
-Fase 4: Monitoreo y OS-level tunables
-##############################
 
+-- Monitoreo y OS-level tunables
+
+/*
 En esta fase verás:
-
 Métricas dentro de Redis.
-
 Parámetros del sistema operativo relevantes (a nivel conceptual).
+Usar INFO para ver métricas de performance
+*/
 
-Paso 4.1. Usar INFO para ver métricas de performance
-
-Estando en el modo sin persistencia (o también puedes hacerlo en cualquiera de los modos anteriores), ejecuta:
+-- Estando en el modo sin persistencia (o también puedes hacerlo en cualquiera de los modos anteriores), ejecuta:
 
 # Entrar a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -720,7 +537,7 @@ INFO replication
 # Salir de redis-cli
 QUIT
 
-
+/*
 Comentarios importantes:
 
 INFO
@@ -737,8 +554,11 @@ En modo sin persistencia debe mostrar flags indicando que RDB/AOF están desacti
 
 INFO replication
 Muestra si el nodo es master o replica, y estado de replicación.
+*/
 
-Paso 4.2. Ver slowlog (registro de comandos lentos)
+
+
+-- Paso 4.2. Ver slowlog (registro de comandos lentos)
 
 # Entrar a redis-cli
 /usr/bin/docker exec -it redis-m1m3 redis-cli
@@ -752,12 +572,11 @@ SLOWLOG GET
 # Salir de redis-cli
 QUIT
 
-
-En este ejercicio probablemente no verás muchos comandos lentos, pero en producción es una herramienta clave de monitoreo.
-
-Paso 4.3. OS-level tunables (conceptual)
-
-Estos no los vamos a cambiar dentro del contenedor, pero en un host real verías cosas como:
+/*
+  En este ejercicio probablemente no verás muchos comandos lentos, pero en producción es una herramienta clave de monitoreo.
+  OS-level tunables (conceptual)
+  Estos no los vamos a cambiar dentro del contenedor, pero en un host real verías cosas como:
+*/
 
 # Ver el valor de overcommit_memory
 sysctl vm.overcommit_memory
@@ -772,6 +591,8 @@ sysctl vm.swappiness
 ulimit -n
 
 
+
+/*
 Comentarios:
 
 vm.overcommit_memory
@@ -785,9 +606,13 @@ Si es alto, el sistema puede usar swap agresivamente, lo cual es terrible para R
 
 ulimit -n
 Se debe subir para permitir muchos clientes simultáneos.
+/*
 
-Paso 4.4. Ver métricas en RedisInsight
 
+
+-- Ver métricas en RedisInsight
+
+/*
 En el navegador, abre:
 
 http://localhost:5540
@@ -795,16 +620,15 @@ http://localhost:5540
 Conecta a la instancia de Redis (host redis, puerto 6379 o localhost:6379 según como lo expongas), y verás:
 
 Panel de claves.
-
 Tamaño de memoria.
-
 Métricas de commands/sec, etc.
 
 Esto es parte de Monitoring Redis performance usando una herramienta gráfica.
+*/
 
-##############################
-Limpieza final del entorno
-##############################
+
+
+-- Limpieza final del entorno
 
 Cuando termines:
 
@@ -818,7 +642,7 @@ cd /home/student/redis_ha_m4
 # Opcional: eliminar la carpeta de backups si ya no los necesitas
 rm -rf /home/student/redis_ha_m4/backups
 
-
+/*
 Comentarios:
 
 /usr/bin/docker compose down
@@ -829,205 +653,4 @@ Borra los datos persistentes.
 
 rm -rf backups
 Limpia tus respaldos locales del ejercicio.
-
-Resumen profundo y relación con Module 4: Operations
-
-Revisemos cómo este ejercicio se conecta con todos los subtemas del módulo.
-
-Available persistence mechanisms
-
-En el ejercicio:
-
-Configuraste Redis con AOF (--appendonly yes).
-
-Luego con RDB (--appendonly no, --save 60 1000).
-
-Luego sin persistencia (--appendonly no, --save "").
-
-Con esto pudiste ver:
-
-AOF: registro continuo de comandos, ideal para RPO bajo.
-
-RDB: snapshots periódicos, menos I/O pero posible pérdida de más minutos de datos.
-
-Sin persistencia: máximo rendimiento pero pierdes todo al reiniciar.
-
-Precautions to avoid SSD wearout
-
-Aunque no hicimos medidas, el ejercicio mostró:
-
-Que AOF genera un archivo que crece con cada escritura.
-
-Que RDB genera snapshots completos (dump.rdb).
-
-Que puedes controlar la frecuencia de snapshots con --save.
-
-Esto te permite razonar:
-
-Si configuras RDB muy agresivo, escribirás el snapshot muchas veces, desgastando más el SSD.
-
-Si usas AOF con fsync muy agresivo, tendrás muchas escrituras pequeñas al disco.
-
-Conocer estos mecanismos es esencial para no matar la vida útil del SSD y mantener buena latencia.
-
-Backup and restore
-
-Practicaste:
-
-Copiar el archivo AOF desde /data del contenedor a un directorio de backups en el host.
-
-Simular un desastre eliminando contenedor y volumen.
-
-Restaurar los datos copiando el backup AOF de regreso a /data y reiniciando Redis.
-
-Esto es exactamente el flujo de backup y restore que se aplica en entornos reales (aunque allá se agregan scripts, automatización y copias a almacenamiento remoto).
-
-Tools for exploring database contents
-
-Usaste:
-
-redis-cli: SET, GET, LLEN, etc.
-
-Podrías complementar usando SCAN en lugar de KEYS para no bloquear la instancia.
-
-RedisInsight: para ver claves, TTLs, tamaños, etc.
-
-Explorar la base de forma segura te permite:
-
-Entender qué tipos de datos guardas.
-
-Detectar si hay claves gigantes o sin TTL en un entorno pensado como cache.
-
-Tools for dump analysis
-
-De manera sencilla:
-
-Viste los archivos en /data (appendonly.aof, dump.rdb).
-
-Copiaste el AOF al host y podrías analizarlo offline (tamaño, contenido, etc.).
-
-En un entorno real:
-
-Aplicarías herramientas específicas para leer RDB/AOF y generar reportes de:
-
-Distribución de tipos de datos.
-
-Top keys más grandes.
-
-TTLs, etc.
-
-Este ejercicio al menos te mostró dónde viven esos dumps y cómo sacarlos para analizarlos.
-
-Tuning durability vs performance
-
-Jugamos con:
-
-AOF activado y desactivado.
-
-RDB con distintas reglas de save.
-
-Sin persistencia.
-
-Eso te permite comprender que:
-
-Más durabilidad implica más I/O, más latencia potencial.
-
-Menos durabilidad implica más rendimiento, pero mayor riesgo de pérdida de datos.
-
-En producción elegirías combinaciones como:
-
-RDB + AOF everysec para RPO bajo y arranque rápido.
-
-Solo RDB para datos menos críticos.
-
-Sin persistencia para caches puros.
-
-Switching between RDB and AOF
-
-En el docker-compose:
-
-Cambiaste de AOF a RDB al modificar la línea command.
-
-Podrías haber combinado ambos.
-
-Esto muestra que cambiar la estrategia de persistencia es un cambio de configuración, pero que debe hacerse planificando:
-
-Backups previos.
-
-Impacto en CPU, RAM y disco por BGSAVE/BGREWRITEAOF.
-
-Use cases for diskless Redis
-
-La fase sin persistencia mostró:
-
-Que tras reiniciar, las claves se pierden.
-
-Ese comportamiento es aceptable cuando:
-
-Redis actúa como cache.
-
-O cuando los datos se pueden reconstruir desde otra base de verdad.
-
-Esto te da un ejemplo práctico de por qué alguien elegiría no persistir.
-
-OS-level tunables relevant for Redis
-
-A nivel conceptual revisaste:
-
-vm.overcommit_memory (para permitir fork seguro para snapshots).
-
-vm.swappiness (para evitar que Redis entre a swap).
-
-Transparent Huge Pages (evitar pausas raras).
-
-ulimit -n (manejo de muchas conexiones).
-
-Aunque no tocamos estos parámetros en vivo, ya sabes:
-
-Qué nombres tienen.
-
-Por qué son relevantes.
-
-Cómo consultarlos en un sistema real.
-
-Monitoring Redis performance
-
-Usaste:
-
-INFO (memory, clients, persistence, replication).
-
-slowlog (configuración y lectura).
-
-RedisInsight (métricas gráficas).
-
-Esto cubre:
-
-Monitoreo de uso de memoria.
-
-Monitoreo de conexiones.
-
-Monitoreo de persistencia (si se están haciendo snapshots, tamaños de AOF).
-
-Monitoreo de rendimiento (ops/s, latencia, comandos lentos).
-
-Todo lo anterior es la base operativa para mantener "Redis for High Availability and Performance" en producción.
-
-Conclusión
-
-En este ejercicio configuraste y manipulaste una instancia de Redis en Docker para recorrer, en la práctica, todo el ciclo operativo del Module 4:
-
-Levantaste Redis con distintos mecanismos de persistencia (AOF, RDB, sin persistencia).
-
-Practicaste un flujo completo de backup y restore usando el AOF.
-
-Ubicaste los archivos de datos de Redis y entendiste su rol como dumps de memoria.
-
-Exploraste el contenido de la base para entender qué se está guardando.
-
-Viste cómo las decisiones de persistencia impactan durabilidad, rendimiento y potencial desgaste de SSD.
-
-Cambiaste entre diferentes modos (AOF, RDB, sin persistencia), que es justo "switching between RDB and AOF" y la elección de un modo diskless.
-
-Revisaste qué tipo de parámetros del sistema operativo debes tener bajo control para que Redis se comporte bien.
-
-Y usaste herramientas internas y externas (INFO, slowlog, RedisInsight) para monitorear la salud y el rendimiento de Redis.
+*/
