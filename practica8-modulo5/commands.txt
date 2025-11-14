@@ -1,0 +1,135 @@
+########################################
+# 0. LIMPIEZA Y ARRANQUE DEL LABORATORIO
+########################################
+
+# 0.1 Opcional: limpiar todo antes de empezar
+docker compose down -v
+
+# 0.2 Asegurar permisos del script (solo la primera vez)
+chmod +x start_mod5.sh
+
+# 0.3 Levantar TODO el laboratorio (instancias + replicas + cluster + sentinels)
+./start_mod5.sh
+
+
+########################################
+# 1. VERIFICAR SENTINEL BÁSICO
+########################################
+
+docker logs redis-m5-sentinel1 | head
+docker logs redis-m5-sentinel2 | head
+docker logs redis-m5-sentinel3 | head
+
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 info sentinel
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 sentinel masters
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 sentinel master mymaster
+
+
+########################################
+# 2. INSERTAR USUARIOS “BAJOS” EN redis-app-a
+########################################
+
+docker exec -it redis-m5-app-a redis-cli set user:1000:profile "perfil_user_1000"
+docker exec -it redis-m5-app-a redis-cli set user:2000:profile "perfil_user_2000"
+docker exec -it redis-m5-app-a redis-cli set user:4500:profile "perfil_user_4500"
+
+
+########################################
+# 3. INSERTAR USUARIOS “ALTOS” EN redis-app-b
+########################################
+
+docker exec -it redis-m5-app-b redis-cli set user:5000:profile "perfil_user_5000"
+docker exec -it redis-m5-app-b redis-cli set user:7500:profile "perfil_user_7500"
+docker exec -it redis-m5-app-b redis-cli set user:9000:profile "perfil_user_9000"
+
+
+########################################
+# 4. VERIFICAR PARTICIONAMIENTO A NIVEL APLICACIÓN
+########################################
+
+docker exec -it redis-m5-app-a redis-cli keys "user:*:profile"
+docker exec -it redis-m5-app-b redis-cli keys "user:*:profile"
+
+
+########################################
+# 5. INSERTAR PRODUCTOS EN EL MASTER
+########################################
+
+docker exec -it redis-m5-master redis-cli set product:1 "Laptop"
+docker exec -it redis-m5-master redis-cli set product:2 "Celular"
+docker exec -it redis-m5-master redis-cli set product:3 "Monitor"
+
+
+########################################
+# 6. VERIFICAR REPLICACIÓN MASTER / REPLICAS
+########################################
+
+docker exec -it redis-m5-master   redis-cli keys "product:*"
+
+docker exec -it redis-m5-replica1 redis-cli keys "product:*"
+docker exec -it redis-m5-replica1 redis-cli get product:1
+
+docker exec -it redis-m5-replica2 redis-cli keys "product:*"
+docker exec -it redis-m5-replica2 redis-cli get product:2
+
+docker exec -it redis-m5-master   redis-cli info replication
+docker exec -it redis-m5-replica1 redis-cli info replication
+docker exec -it redis-m5-replica2 redis-cli info replication
+
+
+########################################
+# 7. CONSULTAR SENTINEL (ESTADO DETALLADO)
+########################################
+
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 info sentinel
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 sentinel masters
+docker exec -it redis-m5-sentinel1 redis-cli -p 26379 sentinel master mymaster
+
+
+########################################
+# 8. CREAR REDIS CLUSTER (6 NODOS)
+########################################
+
+docker exec -it redis-m5-cluster-1 redis-cli --cluster create \
+  redis-m5-cluster-1:6379 \
+  redis-m5-cluster-2:6379 \
+  redis-m5-cluster-3:6379 \
+  redis-m5-cluster-4:6379 \
+  redis-m5-cluster-5:6379 \
+  redis-m5-cluster-6:6379 \
+  --cluster-replicas 1
+
+
+########################################
+# 9. VER ESTADO DEL CLUSTER Y PROBAR UNA CLAVE
+########################################
+
+docker exec -it redis-m5-cluster-1 redis-cli cluster nodes
+docker exec -it redis-m5-cluster-1 redis-cli -c set user:100:name "alice"
+docker exec -it redis-m5-cluster-1 redis-cli -c get user:100:name
+
+
+########################################
+# 10. NAT / RED DOCKER
+########################################
+
+docker network ls
+docker network inspect practica8-modulo5_redis-net
+docker exec -it redis-m5-cluster-1 redis-cli cluster nodes
+
+
+########################################
+# 11. BACKUP CONSISTENTE DESDE UNA REPLICA
+########################################
+
+docker exec -it redis-m5-replica1 redis-cli bgsave
+docker logs --tail 20 redis-m5-replica1
+docker exec -it redis-m5-replica1 ls -l /data
+
+
+########################################
+# 12. OPCIONAL: APAGAR Y LIMPIAR TODO
+########################################
+
+# Solo si quieres dejar limpio el entorno al final:
+# docker compose down -v
