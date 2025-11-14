@@ -1,23 +1,24 @@
 -- Levantar el entorno
-# Cambia al directorio donde está el archivo docker-compose.yml
-cd /home/student/redis_ha_m4
+
+# Cambia al directorio del proyecto de la práctica
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
 
 # Levanta los servicios en segundo plano
-/usr/bin/docker compose up -d
+docker compose up -d
 
 # Verifica que los contenedores estén corriendo
-/usr/bin/docker ps
+docker ps
 
 /*
   Comentarios:
 
-  cd /home/student/redis_ha_m4
-  Cambia al directorio que contiene el archivo docker-compose.yml.
+  cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+  Cambia al directorio que contiene el archivo docker-compose.yml de esta práctica.
 
-  /usr/bin/docker compose up -d
+  docker compose up -d
   Levanta los servicios definidos en docker-compose.yml en modo "detached" (en segundo plano).
 
-  /usr/bin/docker ps
+  docker ps
   Lista los contenedores en ejecución para verificar que redis-m1m3 y redis-insight estén levantados.
 */
 
@@ -26,12 +27,12 @@ cd /home/student/redis_ha_m4
 -- Probar conexión a Redis
 
 # Conexión a Redis dentro del contenedor redis-m1m3
-/usr/bin/docker exec -it redis-m1m3 redis-cli ping
+docker exec -it redis-m1m3 redis-cli ping
 
 /*
   Comentarios:
 
-  /usr/bin/docker exec -it redis-m1m3 redis-cli ping
+  docker exec -it redis-m1m3 redis-cli ping
   Ejecuta redis-cli dentro del contenedor redis-m1m3 y envía el comando PING, que debe responder PONG si Redis está activo.
 
   Hasta aquí ya tenemos Redis corriendo con AOF activado y RedisInsight listo.
@@ -53,7 +54,7 @@ cd /home/student/redis_ha_m4
 -- Insertar datos de ejemplo. Entramos al redis-cli dentro del contenedor:
 
 # Abrir una sesión interactiva de redis-cli dentro del contenedor
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 -- Dentro de redis-cli, ejecuta:
 
@@ -102,79 +103,61 @@ QUIT
 
 
 
--- Ver el archivo AOF en el host. Ahora vamos a buscar el archivo AOF en el sistema de archivos del contenedor:
+-- Ver el directorio AOF en el host. Ahora vamos a buscar el directorio AOF en el sistema de archivos del contenedor:
 
 # Ver el contenido del directorio /data dentro del contenedor (ahí vive AOF/RDB)
-/usr/bin/docker exec -it redis-m1m3 ls -lah /data
+docker exec -it redis-m1m3 ls -lah /data
+
+# Ver el contenido del directorio appendonlydir
+docker exec -it redis-m1m3 ls -lah /data/appendonlydir
 
 /*
   Comentarios:
 
-  /usr/bin/docker exec -it redis-m1m3 ls -lah /data
-  Lista los archivos en /data donde Redis guarda sus archivos persistentes. Aquí deberías ver un archivo como appendonly.aof y quizá dump.rdb.
+  docker exec -it redis-m1m3 ls -lah /data
+  Lista los archivos en /data donde Redis guarda sus archivos persistentes. En Redis 7 verás un directorio llamado appendonlydir y quizá un archivo dump.rdb.
+
+  docker exec -it redis-m1m3 ls -lah /data/appendonlydir
+  Lista los archivos dentro de appendonlydir. Ese directorio contiene:
+    - appendonly.aof.manifest
+    - uno o más archivos base e incrementales del AOF (por ejemplo, appendonly.aof.1.base.rdb, appendonly.aof.1.incr.aof).
 
   Ese directorio /data está mapeado al volumen redis_data en el host.
 */
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 -- Simular un backup del AOF
 
 /*
-  El volumen redis_data es manejado por Docker. Vamos a copiar el archivo AOF desde el contenedor hacia el host como "backup lógico":
-  Primero identificamos el nombre del archivo AOF (normalmente appendonly.aof):
+  El volumen redis_data es manejado por Docker. Vamos a copiar el directorio AOF completo desde el contenedor hacia el host como "backup lógico".
+  En Redis 7 el AOF ya no es un solo archivo appendonly.aof, sino un directorio llamado appendonlydir.
 */
 
-# Verifica el nombre del archivo AOF en /data
-/usr/bin/docker exec -it redis-m1m3 ls /data
-
--- Supongamos que el archivo se llama appendonly.aof. Hacemos el backup:
+# Verifica que exista el directorio AOF en /data
+docker exec -it redis-m1m3 ls /data
 
 # Crear un directorio de backups en el host
-mkdir -p /home/student/redis_ha_m4/backups
+mkdir -p /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups
 
-# Copiar el archivo AOF desde el contenedor al host como backup
-/usr/bin/docker cp redis-m1m3:/data/appendonly.aof /home/student/redis_ha_m4/backups/appendonly_backup.aof
+# Copiar el directorio AOF desde el contenedor al host como backup
+docker cp redis-m1m3:/data/appendonlydir /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups/appendonlydir_backup
 
 /*
   Comentarios:
 
-  mkdir -p /home/student/redis_ha_m4/backups
+  docker exec -it redis-m1m3 ls /data
+  Muestra que existe el directorio appendonlydir donde vive el AOF.
+
+  mkdir -p /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups
   Crea un directorio donde vamos a almacenar backups de Redis.
 
-  /usr/bin/docker cp redis-m1m3:/data/appendonly.aof /home/student/redis_ha_m4/backups/appendonly_backup.aof
-  Copia el archivo AOF desde el contenedor al host. Esto es un backup manual que puedes guardar en otro disco o nube.
+  docker cp redis-m1m3:/data/appendonlydir /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups/appendonlydir_backup
+  Copia el directorio appendonlydir desde el contenedor al host. appendonlydir_backup contendrá:
+    - appendonly.aof.manifest
+    - archivos base e incrementales del AOF.
+  Esto es un backup manual que puedes guardar en otro disco o nube.
 */
-
 
 
 
@@ -182,28 +165,29 @@ mkdir -p /home/student/redis_ha_m4/backups
 -- Vamos a suponer que el servidor tuvo un problema y perdimos el contenedor y su volumen:
 
 # Apagar y eliminar los servicios definidos en docker compose
-cd /home/student/redis_ha_m4
-/usr/bin/docker compose down
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose down
 
 # Eliminar el volumen de datos de Redis para simular pérdida completa de disco
-/usr/bin/docker volume rm redis_ha_m4_redis_data
+docker volume rm practica7-modulo4_redis_data
 
 /*
   Comentarios:
 
-  /usr/bin/docker compose down
+  docker compose down
   Detiene y elimina los contenedores creados por este docker compose.
 
-  /usr/bin/docker volume rm redis_ha_m4_redis_data
+  docker volume rm practica7-modulo4_redis_data
   Elimina el volumen donde estaban los datos. Esto simula la pérdida total de datos en disco para esta instancia.
 
-  Nota: el nombre del volumen puede variar según el proyecto. Usa /usr/bin/docker volume ls si necesitas confirmar el nombre.
+  Nota: el nombre del volumen puede variar según el proyecto. Usa docker volume ls si necesitas confirmar el nombre.
 
-  -- Restaurar Redis usando el backup de AOF
+  -- Restaurar Redis usando el backup de AOF (directorio appendonlydir)
 
   Plan:
   Levantar de nuevo el entorno.
-  Copiar el backup AOF desde el host al nuevo volumen (nuevo /data).
+  Copiar el directorio appendonlydir_backup desde el host al contenedor.
+  Reemplazar el appendonlydir actual por el de backup.
   Verificar que los datos regresan.
 */
 
@@ -212,27 +196,38 @@ cd /home/student/redis_ha_m4
 -- Primero levantamos el entorno otra vez:
 
 # Levantar nuevamente los servicios (volumen nuevo)
-/usr/bin/docker compose up -d
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose up -d
 
 /*
   El volumen redis_data será recreado vacío.
-  Ahora copiamos el backup al contenedor:
+  Ahora copiamos el directorio de backup al contenedor:
 */
 
-# Copiar el backup AOF desde el host hacia el contenedor
-/usr/bin/docker cp /home/student/redis_ha_m4/backups/appendonly_backup.aof redis-m1m3:/data/appendonly.aof
+# Copiar el directorio de backup desde el host hacia el contenedor (dentro de /data)
+/* Esto crea el directorio /data/appendonlydir_backup dentro del contenedor */
+docker cp /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups/appendonlydir_backup redis-m1m3:/data
 
-# Reiniciar Redis para que cargue el archivo AOF restaurado
-/usr/bin/docker restart redis-m1m3
+# Reemplazar el directorio appendonlydir actual por el de backup dentro del contenedor
+docker exec -it redis-m1m3 sh -c "rm -rf /data/appendonlydir && mv /data/appendonlydir_backup /data/appendonlydir"
+
+# Reiniciar Redis para que cargue el AOF restaurado
+docker restart redis-m1m3
 
 /*
   Comentarios:
 
-  /usr/bin/docker cp ... redis-m1m3:/data/appendonly.aof
-  Sobrescribe el archivo AOF vacío (o inexistente) en /data con el backup.
+  docker cp ... redis-m1m3:/data
+  Copia el directorio appendonlydir_backup dentro de /data del contenedor, quedando como /data/appendonlydir_backup.
 
-  /usr/bin/docker restart redis-m1m3
-  Reinicia el contenedor para que Redis arranque leyendo el AOF que acabamos de poner.
+  docker exec -it redis-m1m3 sh -c "rm -rf /data/appendonlydir && mv /data/appendonlydir_backup /data/appendonlydir"
+  Dentro del contenedor:
+    - Borra el appendonlydir actual (vacío o recién creado).
+    - Renombra appendonlydir_backup a appendonlydir.
+  De esta forma, Redis verá exactamente el directorio AOF que respaldaste.
+
+  docker restart redis-m1m3
+  Reinicia el contenedor para que Redis arranque leyendo el AOF restaurado desde appendonlydir.
 */
 
 
@@ -240,7 +235,7 @@ cd /home/student/redis_ha_m4
 -- Verificamos si las claves siguen ahí:
 
 # Entrar otra vez a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Consultar la sesión del usuario 1001
 GET session:1001
@@ -259,8 +254,8 @@ QUIT
 
 /*
   Si ves valores correctos, validaste un ciclo completo de:
-  Persistencia con AOF.
-  Backup y restore de archivos.
+  Persistencia con AOF (directorio appendonlydir).
+  Backup y restore del directorio appendonlydir.
 */
 
 
@@ -269,12 +264,11 @@ QUIT
 
 /*
   En esta fase no vamos a hacer un benchmark formal, pero sí vamos a tocar la configuración para ver cómo se cambiaría la estrategia de persistencia.
-
   Primero, actualizamos el docker-compose para usar RDB como mecanismo principal.
 */
 
 -- Versión RDB del docker-compose
--- Edita el archivo /home/student/redis_ha_m4/docker-compose.yml para que quede así en esta fase:
+-- Edita el archivo /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/docker-compose.yml para que quede así en esta fase:
 
 services:
   redis:
@@ -317,19 +311,20 @@ volumes:
 -- Aplicamos este cambio:
 
 # Apagar el entorno actual
-cd /home/student/redis_ha_m4
-/usr/bin/docker compose down
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose down
 
 # Eliminar el volumen de datos para empezar limpio (solo para fines del ejercicio)
-/usr/bin/docker volume rm redis_ha_m4_redis_data
+docker volume rm practica7-modulo4_redis_data
 
 # Levantar el entorno con la configuración nueva basada en RDB
-/usr/bin/docker compose up -d
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose up -d
 
 -- Insertar datos en modo RDB y forzar un snapshot
 
 # Entrar a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Crear algunas claves de ejemplo
 SET rdb:test:1 "valor1"
@@ -343,19 +338,19 @@ BGSAVE
 QUIT
 
 /*
-Comentarios:
+  Comentarios:
 
-SET rdb:test:...
-Solo son claves de prueba para que haya algo que guardar.
+  SET rdb:test:...
+  Solo son claves de prueba para que haya algo que guardar.
 
-BGSAVE
-Ordena a Redis que lance un proceso en segundo plano para generar un archivo RDB con el estado actual de la base.
+  BGSAVE
+  Ordena a Redis que lance un proceso en segundo plano para generar un archivo RDB con el estado actual de la base.
 */
 
 -- Verificamos el archivo:
 
 # Ver archivos en /data (debería existir dump.rdb)
-/usr/bin/docker exec -it redis-m1m3 ls -lah /data
+docker exec -it redis-m1m3 ls -lah /data
 
 /*
   Aquí se ve cómo en este modo la persistencia se basa en snapshots RDB, no en un log de cambios.
@@ -450,21 +445,22 @@ volumes:
 -- Aplicamos los cambios:
 
 # Apagar el entorno actual
-cd /home/student/redis_ha_m4
-/usr/bin/docker compose down
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose down
 
 # Eliminar volumen para empezar completamente vacío
-/usr/bin/docker volume rm redis_ha_m4_redis_data
+docker volume rm practica7-modulo4_redis_data
 
 # Levantar el entorno sin persistencia
-/usr/bin/docker compose up -d
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose up -d
 
 
 
 -- Probar la pérdida de datos tras reinicio
 
 # Entrar a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Crear algunas claves de prueba
 SET nopersist:test:1 "dato1"
@@ -482,14 +478,14 @@ QUIT
 -- Ahora reinicia el contenedor:
 
 # Reiniciar el contenedor de Redis
-/usr/bin/docker restart redis-m1m3
+docker restart redis-m1m3
 
 
 
 -- Vuelve a revisar:
 
 # Entrar de nuevo a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Intentar leer las claves creadas antes
 GET nopersist:test:1
@@ -508,16 +504,16 @@ QUIT
 -- Monitoreo y OS-level tunables
 
 /*
-En esta fase verás:
-Métricas dentro de Redis.
-Parámetros del sistema operativo relevantes (a nivel conceptual).
-Usar INFO para ver métricas de performance
+  En esta fase verás:
+  Métricas dentro de Redis.
+  Parámetros del sistema operativo relevantes (a nivel conceptual).
+  Usar INFO para ver métricas de performance
 */
 
 -- Estando en el modo sin persistencia (o también puedes hacerlo en cualquiera de los modos anteriores), ejecuta:
 
 # Entrar a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Ver estadísticas generales
 INFO
@@ -538,22 +534,20 @@ INFO replication
 QUIT
 
 /*
-Comentarios importantes:
+  INFO
+  Muestra muchas métricas. En producción se usa para monitoreo.
 
-INFO
-Muestra muchas métricas. En producción se usa para monitoreo.
+  INFO memory
+  Muestra uso de memoria total, memoria RSS, ratio de fragmentación, etc.
 
-INFO memory
-Muestra uso de memoria total, memoria RSS, ratio de fragmentación, etc.
+  INFO clients
+  Muestra cuántos clientes están conectados, cuántos están bloqueados, etc.
 
-INFO clients
-Muestra cuántos clientes están conectados, cuántos están bloqueados, etc.
+  INFO persistence
+  En modo sin persistencia debe mostrar flags indicando que RDB/AOF están desactivados.
 
-INFO persistence
-En modo sin persistencia debe mostrar flags indicando que RDB/AOF están desactivados.
-
-INFO replication
-Muestra si el nodo es master o replica, y estado de replicación.
+  INFO replication
+  Muestra si el nodo es master o replica, y estado de replicación.
 */
 
 
@@ -561,7 +555,7 @@ Muestra si el nodo es master o replica, y estado de replicación.
 -- Paso 4.2. Ver slowlog (registro de comandos lentos)
 
 # Entrar a redis-cli
-/usr/bin/docker exec -it redis-m1m3 redis-cli
+docker exec -it redis-m1m3 redis-cli
 
 # Configurar el umbral de slowlog (ejemplo: 10000 microsegundos = 10 ms)
 CONFIG SET slowlog-log-slower-than 10000
@@ -574,6 +568,7 @@ QUIT
 
 /*
   En este ejercicio probablemente no verás muchos comandos lentos, pero en producción es una herramienta clave de monitoreo.
+
   OS-level tunables (conceptual)
   Estos no los vamos a cambiar dentro del contenedor, pero en un host real verías cosas como:
 */
@@ -593,20 +588,20 @@ ulimit -n
 
 
 /*
-Comentarios:
+  Comentarios:
 
-vm.overcommit_memory
-Para Redis, suele preferirse vm.overcommit_memory=1 para evitar problemas al hacer fork para snapshots.
+  vm.overcommit_memory
+  Para Redis, suele preferirse vm.overcommit_memory=1 para evitar problemas al hacer fork para snapshots.
 
-Transparent Huge Pages
-Suele recomendarse desactivarlas para evitar pausas de latencia raras.
+  Transparent Huge Pages
+  Suele recomendarse desactivarlas para evitar pausas de latencia raras.
 
-vm.swappiness
-Si es alto, el sistema puede usar swap agresivamente, lo cual es terrible para Redis.
+  vm.swappiness
+  Si es alto, el sistema puede usar swap agresivamente, lo cual es terrible para Redis.
 
-ulimit -n
-Se debe subir para permitir muchos clientes simultáneos.
-/*
+  ulimit -n
+  Se debe subir para permitir muchos clientes simultáneos.
+*/
 
 
 
@@ -633,24 +628,24 @@ Esto es parte de Monitoring Redis performance usando una herramienta gráfica.
 Cuando termines:
 
 # Apagar los servicios
-cd /home/student/redis_ha_m4
-/usr/bin/docker compose down
+cd /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4
+docker compose down
 
 # Eliminar el volumen de datos
-/usr/bin/docker volume rm redis_ha_m4_redis_data
+docker volume rm practica7-modulo4_redis_data
 
 # Opcional: eliminar la carpeta de backups si ya no los necesitas
-rm -rf /home/student/redis_ha_m4/backups
+rm -rf /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups
 
 /*
-Comentarios:
+  Comentarios:
 
-/usr/bin/docker compose down
-Detiene y elimina contenedores.
+  docker compose down
+  Detiene y elimina contenedores.
 
-/usr/bin/docker volume rm redis_ha_m4_redis_data
-Borra los datos persistentes.
+  docker volume rm practica7-modulo4_redis_data
+  Borra los datos persistentes.
 
-rm -rf backups
-Limpia tus respaldos locales del ejercicio.
+  rm -rf /home/student/Desktop/redis_high_availability_performance_course/practica7-modulo4/backups
+  Limpia tus respaldos locales del ejercicio.
 */

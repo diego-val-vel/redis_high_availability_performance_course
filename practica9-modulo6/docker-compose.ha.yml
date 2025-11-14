@@ -1,0 +1,96 @@
+version: "3.9"
+
+services:
+  # Servicio principal de Redis que actuará como master
+  redis-master:
+    image: redis:7-alpine
+    container_name: redis-master
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_master_data:/data
+    restart: unless-stopped
+
+  # Replica del master. Se conectará a redis-master en el puerto 6379
+  redis-replica-1:
+    image: redis:7-alpine
+    container_name: redis-replica-1
+    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-master", "6379"]
+    depends_on:
+      - redis-master
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_replica1_data:/data
+    restart: unless-stopped
+
+  # Instancia extra de Redis para simular otro shard o instancia adicional
+  redis-extra:
+    image: redis:7-alpine
+    container_name: redis-extra
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_extra_data:/data
+    restart: unless-stopped
+
+  # Primer nodo Sentinel
+  redis-sentinel-1:
+    image: redis:7-alpine
+    container_name: redis-sentinel-1
+    depends_on:
+      - redis-master
+      - redis-replica-1
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+    volumes:
+      - ./sentinel-1.conf:/etc/redis/sentinel.conf
+    ports:
+      - "26379:26379"
+    restart: unless-stopped
+
+  # Segundo nodo Sentinel
+  redis-sentinel-2:
+    image: redis:7-alpine
+    container_name: redis-sentinel-2
+    depends_on:
+      - redis-master
+      - redis-replica-1
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+    volumes:
+      - ./sentinel-2.conf:/etc/redis/sentinel.conf
+    ports:
+      - "26380:26379"
+    restart: unless-stopped
+
+  # Tercer nodo Sentinel
+  redis-sentinel-3:
+    image: redis:7-alpine
+    container_name: redis-sentinel-3
+    depends_on:
+      - redis-master
+      - redis-replica-1
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+    volumes:
+      - ./sentinel-3.conf:/etc/redis/sentinel.conf
+    ports:
+      - "26381:26379"
+    restart: unless-stopped
+
+  # RedisInsight para monitorear visualmente los nodos Redis
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redis-insight
+    depends_on:
+      - redis-master
+      - redis-replica-1
+      - redis-extra
+    ports:
+      - "5540:5540"
+    restart: unless-stopped
+
+volumes:
+  redis_master_data:
+  redis_replica1_data:
+  redis_extra_data:
