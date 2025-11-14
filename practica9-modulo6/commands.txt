@@ -1,166 +1,189 @@
-########################################
-# 0. LIMPIEZA INICIAL (OPCIONAL)
-########################################
+CHULETA MODULO 6 - LABORATORIO REDIS HA
+======================================
 
-# Verifica que estás en el directorio donde está docker-compose.ha.yml
-pwd
+# 0. ARRANQUE DEL LABORATORIO
+# ===========================
 
-# Si quieres asegurarte de que no quede nada de ejecuciones anteriores:
-docker compose -f docker-compose.ha.yml down -v
+# 0.1 Dar permisos al script
+chmod +x start_mod6.sh
+
+# 0.2 Levantar todo el entorno:
+#    - redis-master, redis-replica-1, redis-extra, redis-insight (con docker-compose.ha.yml)
+#    - Y LUEGO los 3 sentinels (redis-sentinel-1..3) usando la IP real de redis-master
+./start_mod6.sh
 
 
-########################################
-# 1. LEVANTAR EL LABORATORIO HA (MÓDULO 6)
-########################################
+# 1. VERIFICAR CONTENEDORES
+# =========================
 
-# Levantar todos los servicios definidos en docker-compose.ha.yml en segundo plano
-docker compose -f docker-compose.ha.yml up -d
-
-# Verificar que todos los contenedores estén arriba
 docker ps
+# Debes ver al menos:
+# - redis-master
+# - redis-replica-1
+# - redis-extra
+# - redis-sentinel-1
+# - redis-sentinel-2
+# - redis-sentinel-3
+# - redis-insight
 
 
-########################################
-# 2. VER ROLES DE LAS INSTANCIAS REDIS
-########################################
+# 2. VER ROLES MASTER / REPLICA / INSTANCIA EXTRA
+# ===============================================
 
-# Ver información de replicación en el nodo master
 docker exec -it redis-master redis-cli INFO replication
+# Esperado:
+#   role:master
+#   connected_slaves:1
+#   slave0: ... redis-replica-1 ...
 
-# Ver información de replicación en la replica
 docker exec -it redis-replica-1 redis-cli INFO replication
+# Esperado:
+#   role:slave (o role:replica)
+#   master_host:redis-master  (o la IP interna del master)
+#   master_link_status:up
 
-# Ver información básica del servidor en redis-extra (instancia independiente)
 docker exec -it redis-extra redis-cli INFO server
+# Confirma que redis-extra es una instancia standalone separada
+# (redis_mode:standalone, tcp_port:6379, etc).
 
 
-########################################
-# 3. PROBAR LA REPLICACIÓN MASTER / REPLICA
-########################################
+# 3. PROBAR REPLICACION
+# =====================
 
-# Escribir una clave en el master
 docker exec -it redis-master redis-cli SET usuario:1:nombre "Diego"
+# Escritura en el master
 
-# Leer la misma clave desde la replica para comprobar replicación
 docker exec -it redis-replica-1 redis-cli GET usuario:1:nombre
+# Lectura en la replica: debe devolver "Diego" si la replicacion funciona.
 
 
-########################################
 # 4. VER ESTADO DE SENTINEL
-########################################
+# =========================
+# Estos comandos funcionan porque los sentinels
+# se crearon desde start_mod6.sh con la IP correcta del master.
 
-# Consultar información de Sentinel en el primer nodo
 docker exec -it redis-sentinel-1 redis-cli -p 26379 INFO sentinel
+# Esperado:
+#   sentinel_masters:1
+#   master0:name=mymaster,status=ok,...
+#   slaves=1 (redis-replica-1)
+#   sentinels=3
 
-# (Opcional) Ver maestros que está monitoreando Sentinel
 docker exec -it redis-sentinel-1 redis-cli -p 26379 SENTINEL masters
+# Lista los masters que monitorea (debe aparecer "mymaster" con ip/puerto del master)
 
-# (Opcional) Ver detalle del master "mymaster" desde Sentinel
 docker exec -it redis-sentinel-1 redis-cli -p 26379 SENTINEL master mymaster
+# Detalle del master:
+#   "ip"            -> IP interna redis-master
+#   "port"          -> 6379
+#   "num-slaves"    -> 1
+#   "num-other-sentinels" -> 2
+#   "quorum"        -> 2
 
 
-########################################
-# 5. SIMULAR FALLA DEL MASTER Y VER FAILOVER
-########################################
+# 5. SIMULAR CAIDA DEL MASTER Y OBSERVAR FAILOVER
+# ===============================================
 
-# Detener el contenedor del master para simular una caída
 docker stop redis-master
+# Simula caida del master original
 
-# Ver logs en tiempo real de un Sentinel para observar el failover (Ctrl + C para salir)
 docker logs -f redis-sentinel-1
+# Ver logs en tiempo real (Ctrl + C para salir).
+# Deberias ver algo como:
+#  - +sdown / +odown sobre mymaster
+#  - +failover-state-select-slave
+#  - +selected-slave ...
+#  - +promoted-slave ...
+#  - +switch-master mymaster <vieja-ip> 6379 <nueva-ip> 6379
 
-# Ver el rol actual de redis-replica-1 tras el failover (debería ser master)
+
+# 6. CONFIRMAR NUEVO MASTER
+# =========================
+
 docker exec -it redis-replica-1 redis-cli INFO replication
+# AHORA deberia mostrar:
+#   role:master      (fue promovido)
+#   connected_slaves:0 (por ahora, no le colgamos replicas)
+#   master_host ya no aplica porque es master
 
-# Verificar que la clave original sigue existiendo en el nuevo master
 docker exec -it redis-replica-1 redis-cli GET usuario:1:nombre
+# La clave "usuario:1:nombre" debe seguir existiendo ("Diego")
+
+# Probar nuevas escrituras en el nuevo master (antes era replica read-only)
+docker exec -it redis-replica-1 redis-cli SET usuario:2:nombre "Ana"
+docker exec -it redis-replica-1 redis-cli SET usuario:4:nombre "Luis"
+# NO debe salir READONLY: ahora acepta escrituras.
 
 
-########################################
-# 6. SHARDING LÓGICO (SHARD A = MASTER ACTUAL, SHARD B = redis-extra)
-########################################
+# 7. SHARDING LOGICO (SHARD A Y SHARD B)
+# ======================================
 
-# Escribir usuarios "pares" en Shard A (master actual, redis-replica-1 tras failover)
+# Shard A = redis-replica-1 (nuevo master despues del failover)
+# Shard B = redis-extra
+
+# Usuarios pares al Shard A
 docker exec -it redis-replica-1 redis-cli SET usuario:2:nombre "Ana"
 docker exec -it redis-replica-1 redis-cli SET usuario:4:nombre "Luis"
 
-# Escribir usuarios "impares" en Shard B (redis-extra)
+# Usuarios impares al Shard B
 docker exec -it redis-extra redis-cli SET usuario:1:nombre "Diego"
-docker exec -it redis-extra redis-cli SET usuario:3:nombre "María"
+docker exec -it redis-extra redis-cli SET usuario:3:nombre "Maria"
 
-# Ver claves de usuarios en Shard A
+# Ver claves en cada shard
 docker exec -it redis-replica-1 redis-cli KEYS "usuario:*:nombre"
+# Debe listar solo los usuarios que guardaste en Shard A
 
-# Ver claves de usuarios en Shard B
 docker exec -it redis-extra redis-cli KEYS "usuario:*:nombre"
+# Debe listar solo los usuarios que guardaste en Shard B
 
 
-########################################
-# 7. MONITOREO CON REDISINSIGHT
-########################################
+# 8. BACKUP Y RESTORE
+# ===================
 
-# Verificar que el contenedor de RedisInsight está corriendo
-docker ps | grep redis-insight
-
-# Luego, en el navegador, abrir:
-# http://localhost:5540
-
-
-########################################
-# 8. BACKUP Y RESTORE BÁSICO
-########################################
-
-# Forzar un snapshot RDB en el master actual (redis-replica-1 si ya es master)
+# 8.1 Forzar un snapshot RDB en el master actual (redis-replica-1)
 docker exec -it redis-replica-1 redis-cli BGSAVE
 
-# Copiar el archivo dump.rdb desde el contenedor al host
+# 8.2 Copiar el dump al host
 docker cp redis-replica-1:/data/dump.rdb ./backup-dump.rdb
 
-# Crear un directorio local para la restauración
+# 8.3 Preparar carpeta para restauracion
 mkdir -p restore-data
 
-# Copiar el backup al directorio de restauración con el nombre que espera Redis
+# 8.4 Copiar el dump a la carpeta de restauracion con el nombre que espera Redis
 cp ./backup-dump.rdb ./restore-data/dump.rdb
 
-# Levantar un nuevo contenedor Redis que cargue el dump de restore-data
+# 8.5 Levantar un nuevo contenedor que arranque desde el dump
 docker run -d --name redis-restore -p 6390:6379 -v "$(pwd)/restore-data:/data" redis:7-alpine
 
-# Ver las claves restauradas en el nuevo contenedor
+# 8.6 Ver claves restauradas
 docker exec -it redis-restore redis-cli KEYS "usuario:*:nombre"
+# Debes ver las claves que existian al momento de BGSAVE.
 
 
-########################################
-# 9. TUNING / REVISIÓN DE CONFIGURACIÓN Y SLOWLOG
-########################################
+# 9. PARAMETROS DE CONFIGURACION Y SLOWLOG
+# ========================================
 
-# Ver si el AOF está habilitado
 docker exec -it redis-replica-1 redis-cli CONFIG GET appendonly
-
-# Ver política de fsync para el AOF
 docker exec -it redis-replica-1 redis-cli CONFIG GET appendfsync
-
-# Ver límite de memoria configurado
 docker exec -it redis-replica-1 redis-cli CONFIG GET maxmemory
 
-# Ver las últimas 10 entradas del slowlog
 docker exec -it redis-replica-1 redis-cli SLOWLOG GET 10
+# Muestra las ultimas 10 operaciones lentas (si hay).
 
 
-########################################
-# 10. LIMPIEZA DEL LABORATORIO
-########################################
+# 10. LIMPIEZA DEL ENTORNO
+# ========================
 
-# Bajar y borrar contenedores + volúmenes del stack principal
+# 10.1 Apagar y borrar stack principal (master, replica, extra, insight)
 docker compose -f docker-compose.ha.yml down -v
 
-# Detener el contenedor de restauración
-docker stop redis-restore
+# 10.2 Apagar y borrar los sentinels (NO son parte de docker-compose)
+docker rm -f redis-sentinel-1 redis-sentinel-2 redis-sentinel-3
 
-# Eliminar el contenedor de restauración
+# 10.3 Apagar y borrar el contenedor de restauracion
+docker stop redis-restore
 docker rm redis-restore
 
-# Borrar archivo de backup
+# 10.4 Borrar archivos de backup y restauracion (opcional)
 rm -f backup-dump.rdb
-
-# Borrar el directorio usado para la restauración
 rm -rf restore-data

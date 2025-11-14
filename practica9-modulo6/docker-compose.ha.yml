@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # Servicio principal de Redis que actuará como master
   redis-master:
@@ -11,6 +9,8 @@ services:
     volumes:
       - redis_master_data:/data
     restart: unless-stopped
+    networks:
+      - redis-net
 
   # Replica del master. Se conectará a redis-master en el puerto 6379
   redis-replica-1:
@@ -24,6 +24,8 @@ services:
     volumes:
       - redis_replica1_data:/data
     restart: unless-stopped
+    networks:
+      - redis-net
 
   # Instancia extra de Redis para simular otro shard o instancia adicional
   redis-extra:
@@ -35,48 +37,8 @@ services:
     volumes:
       - redis_extra_data:/data
     restart: unless-stopped
-
-  # Primer nodo Sentinel
-  redis-sentinel-1:
-    image: redis:7-alpine
-    container_name: redis-sentinel-1
-    depends_on:
-      - redis-master
-      - redis-replica-1
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
-    volumes:
-      - ./sentinel-1.conf:/etc/redis/sentinel.conf
-    ports:
-      - "26379:26379"
-    restart: unless-stopped
-
-  # Segundo nodo Sentinel
-  redis-sentinel-2:
-    image: redis:7-alpine
-    container_name: redis-sentinel-2
-    depends_on:
-      - redis-master
-      - redis-replica-1
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
-    volumes:
-      - ./sentinel-2.conf:/etc/redis/sentinel.conf
-    ports:
-      - "26380:26379"
-    restart: unless-stopped
-
-  # Tercer nodo Sentinel
-  redis-sentinel-3:
-    image: redis:7-alpine
-    container_name: redis-sentinel-3
-    depends_on:
-      - redis-master
-      - redis-replica-1
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
-    volumes:
-      - ./sentinel-3.conf:/etc/redis/sentinel.conf
-    ports:
-      - "26381:26379"
-    restart: unless-stopped
+    networks:
+      - redis-net
 
   # RedisInsight para monitorear visualmente los nodos Redis
   redisinsight:
@@ -89,8 +51,14 @@ services:
     ports:
       - "5540:5540"
     restart: unless-stopped
+    networks:
+      - redis-net
 
 volumes:
   redis_master_data:
   redis_replica1_data:
   redis_extra_data:
+
+networks:
+  redis-net:
+    driver: bridge
