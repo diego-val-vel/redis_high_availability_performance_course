@@ -1,262 +1,278 @@
-services:
-  # 1) Instancia original base
-  redis:
-    image: redis:7-alpine
-    container_name: redis-m1m3
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    networks:
-      - redis-net
+services:                           # Definición de todos los servicios (contenedores) del laboratorio
 
-  # 2) RedisInsight
-  redisinsight:
-    image: redis/redisinsight:latest
-    container_name: redis-insight
+  # ============================================================
+  # 1) INSTANCIA BASE REDIS + REDISINSIGHT
+  # ============================================================
+  redis:                            # Nombre lógico del servicio Redis base
+    image: redis:7-alpine           # Imagen de Redis ligera (Alpine Linux)
+    container_name: redis-m1m3      # Nombre fijo del contenedor para identificarlo fácilmente
+    command: ["redis-server", "--appendonly", "yes"]  # Arrancar redis-server con AOF habilitado
     ports:
-      - "5540:5540"
+      - "6379:6379"                 # Mapear puerto 6379 del host al 6379 del contenedor
+    volumes:
+      - redis_data:/data            # Volumen persistente para almacenar datos de Redis base
+    restart: unless-stopped         # Política de reinicio: reiniciar salvo que se detenga manualmente
+    networks:
+      - redis-net                   # Conectar a la red interna redis-net
+
+  redisinsight:                     # Servicio para la interfaz gráfica RedisInsight
+    image: redis/redisinsight:latest  # Imagen oficial de RedisInsight
+    container_name: redis-insight   # Nombre fijo del contenedor de RedisInsight
+    ports:
+      - "5540:5540"                 # Exponer la interfaz web en el puerto 5540 del host
     depends_on:
-      - redis
-    restart: unless-stopped
+      - redis                       # Asegurar que el servicio redis base exista antes de arrancar RedisInsight
+    restart: unless-stopped         # Reiniciar a menos que se detenga manualmente
     networks:
-      - redis-net
+      - redis-net                   # Misma red que el resto del laboratorio
 
-  # 3) Instancias para particionamiento a nivel aplicación
-  redis-app-a:
-    image: redis:7-alpine
-    container_name: redis-m5-app-a
-    command: ["redis-server", "--appendonly", "yes"]
+  # ============================================================
+  # 2) INSTANCIAS PARA PARTICIONAMIENTO A NIVEL APLICACIÓN
+  # ============================================================
+  redis-app-a:                      # Primera instancia para particionamiento por aplicación
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-app-a  # Nombre fijo del contenedor (app A)
+    command: ["redis-server", "--appendonly", "yes"]  # Redis con AOF activado
     ports:
-      - "6382:6379"
+      - "6382:6379"                 # Host 6382 hacia 6379 interno de la app A
     volumes:
-      - redis_app_a_data:/data
-    restart: unless-stopped
+      - redis_app_a_data:/data      # Volumen para persistir datos de app A
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  redis-app-b:
-    image: redis:7-alpine
-    container_name: redis-m5-app-b
-    command: ["redis-server", "--appendonly", "yes"]
+  redis-app-b:                      # Segunda instancia para particionamiento por aplicación
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-app-b  # Nombre fijo del contenedor (app B)
+    command: ["redis-server", "--appendonly", "yes"]  # Redis con AOF activado
     ports:
-      - "6383:6379"
+      - "6383:6379"                 # Host 6383 hacia 6379 interno de la app B
     volumes:
-      - redis_app_b_data:/data
-    restart: unless-stopped
+      - redis_app_b_data:/data      # Volumen para persistir datos de app B
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  # 4) Topología master + replicas para Sentinel
-  redis-master:
-    image: redis:7-alpine
-    container_name: redis-m5-master
-    command: ["redis-server", "--appendonly", "yes"]
+  # ============================================================
+  # 3) TOPOLOGÍA MASTER + REPLICAS (PARA SENTINEL)
+  # ============================================================
+  redis-master:                     # Servicio que actúa como master
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-master # Nombre fijo del contenedor master
+    command: ["redis-server", "--appendonly", "yes"]  # Redis con AOF habilitado
     ports:
-      - "6380:6379"          # master escuchando en el host en 6380
+      - "6380:6379"                 # Host 6380 hacia 6379 interno del master
     volumes:
-      - redis_master_data:/data
-    restart: unless-stopped
+      - redis_master_data:/data     # Volumen para guardar datos del master
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net            # dentro de la red, nombre: redis-m5-master
+      - redis-net                   # Misma red que las replicas y sentinels
 
-  redis-replica1:
-    image: redis:7-alpine
-    container_name: redis-m5-replica1
-    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-m5-master", "6379"]
+  redis-replica1:                   # Primera replica del master
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-replica1  # Nombre fijo del contenedor replica1
+    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-m5-master", "6379"]  # Arrancar como replica del master
     ports:
-      - "6381:6379"
+      - "6381:6379"                 # Host 6381 hacia 6379 interno de replica1
     volumes:
-      - redis_replica1_data:/data
+      - redis_replica1_data:/data   # Volumen para datos de replica1
     depends_on:
-      - redis-master
-    restart: unless-stopped
+      - redis-master                # Garantizar que el master arranque antes que replica1
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  redis-replica2:
-    image: redis:7-alpine
-    container_name: redis-m5-replica2
-    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-m5-master", "6379"]
+  redis-replica2:                   # Segunda replica del master
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-replica2  # Nombre fijo del contenedor replica2
+    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-m5-master", "6379"]  # Arrancar como replica del master
     ports:
-      - "6384:6379"
+      - "6384:6379"                 # Host 6384 hacia 6379 interno de replica2
     volumes:
-      - redis_replica2_data:/data
+      - redis_replica2_data:/data   # Volumen para datos de replica2
     depends_on:
-      - redis-master
-    restart: unless-stopped
+      - redis-master                # Garantizar que el master arranque antes que replica2
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  # 5) Tres procesos Sentinel EN LA MISMA RED DOCKER
-  # OJO: los configs sentinel1.conf/2/3 los va a generar el script con la IP del master.
-  sentinel1:
-    image: redis:7-alpine
-    container_name: redis-m5-sentinel1
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+  # ============================================================
+  # 4) TRES PROCESOS SENTINEL
+  #    NOTA: LOS .conf SE GENERAN CON start_mod5.sh
+  # ============================================================
+  sentinel1:                        # Primer proceso Sentinel
+    image: redis:7-alpine           # Imagen de Redis (incluye binario redis-sentinel)
+    container_name: redis-m5-sentinel1  # Nombre fijo del contenedor sentinel1
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]  # Ejecutar redis-sentinel con el archivo de configuración montado
     volumes:
-      - ./sentinel1.conf:/etc/redis/sentinel.conf
+      - ./sentinel1.conf:/etc/redis/sentinel.conf  # Montar el sentinel1.conf generado por el script en el contenedor
     depends_on:
-      - redis-master
-      - redis-replica1
-      - redis-replica2
+      - redis-master                # Sentinel depende de que el master exista
+      - redis-replica1              # Y de que las replicas existan
+      - redis-replica2              # Para poder descubrirlas
     ports:
-      - "26379:26379"        # Sentinel1 accesible desde el host
-    restart: unless-stopped
+      - "26379:26379"               # Exponer Sentinel1 en el puerto 26379 del host
+    restart: unless-stopped         # Reiniciar salvo detención manual
     networks:
-      - redis-net            # misma red que master y replicas
+      - redis-net                   # Misma red que master y replicas
 
-  sentinel2:
-    image: redis:7-alpine
-    container_name: redis-m5-sentinel2
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+  sentinel2:                        # Segundo proceso Sentinel
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-sentinel2  # Nombre fijo del contenedor sentinel2
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]  # Ejecutar redis-sentinel con su configuración
     volumes:
-      - ./sentinel2.conf:/etc/redis/sentinel.conf
+      - ./sentinel2.conf:/etc/redis/sentinel.conf  # Montar sentinel2.conf generado por el script
     depends_on:
-      - redis-master
-      - redis-replica1
-      - redis-replica2
+      - redis-master                # Depende del master
+      - redis-replica1              # Depende de replica1
+      - redis-replica2              # Depende de replica2
     ports:
-      - "26380:26379"        # host 26380 -> sentinel interno 26379
-    restart: unless-stopped
+      - "26380:26380"               # Exponer Sentinel2 en el puerto 26380 del host
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  sentinel3:
-    image: redis:7-alpine
-    container_name: redis-m5-sentinel3
-    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+  sentinel3:                        # Tercer proceso Sentinel
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-sentinel3  # Nombre fijo del contenedor sentinel3
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]  # Ejecutar redis-sentinel con su configuración
     volumes:
-      - ./sentinel3.conf:/etc/redis/sentinel.conf
+      - ./sentinel3.conf:/etc/redis/sentinel.conf  # Montar sentinel3.conf generado por el script
     depends_on:
-      - redis-master
-      - redis-replica1
-      - redis-replica2
+      - redis-master                # Depende del master
+      - redis-replica1              # Depende de replica1
+      - redis-replica2              # Depende de replica2
     ports:
-      - "26381:26379"        # host 26381 -> sentinel interno 26379
-    restart: unless-stopped
+      - "26381:26381"               # Exponer Sentinel3 en el puerto 26381 del host
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  # 6) Nodos de Redis Cluster
-  cluster-node-1:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-1
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  # ============================================================
+  # 5) NODOS DE REDIS CLUSTER (3 MASTERS + 3 REPLICAS)
+  # ============================================================
+  cluster-node-1:                   # Nodo de cluster 1 (master)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-1  # Nombre fijo del contenedor cluster 1
+    command: ["redis-server",       # Ejecutar redis-server con opciones para cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar modo cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo donde Redis guardará la configuración de cluster
+              "--cluster-node-timeout", "5000",   # Tiempo máximo de espera de nodo en ms
+              "--appendfilename", "appendonly.aof"]  # Nombre del archivo AOF
     ports:
-      - "7001:6379"
+      - "7001:6379"                 # Host 7001 hacia 6379 interno de cluster-node-1
     volumes:
-      - cluster_node1_data:/data
-    restart: unless-stopped
+      - cluster_node1_data:/data    # Volumen para persistir datos y nodes.conf
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Red interna compartida
 
-  cluster-node-2:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-2
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  cluster-node-2:                   # Nodo de cluster 2 (master)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-2  # Nombre fijo del contenedor cluster 2
+    command: ["redis-server",       # Ejecutar redis-server con opciones de cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo de configuración de cluster
+              "--cluster-node-timeout", "5000",   # Timeout de nodo
+              "--appendfilename", "appendonly.aof"]  # Nombre de archivo AOF
     ports:
-      - "7002:6379"
+      - "7002:6379"                 # Host 7002 hacia 6379 interno de cluster-node-2
     volumes:
-      - cluster_node2_data:/data
-    restart: unless-stopped
+      - cluster_node2_data:/data    # Volumen persistente del nodo 2
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red de cluster
 
-  cluster-node-3:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-3
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  cluster-node-3:                   # Nodo de cluster 3 (master)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-3  # Nombre fijo del contenedor cluster 3
+    command: ["redis-server",       # Ejecutar redis-server con opciones de cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo nodes.conf
+              "--cluster-node-timeout", "5000",   # Timeout de nodo
+              "--appendfilename", "appendonly.aof"]  # Nombre de archivo AOF
     ports:
-      - "7003:6379"
+      - "7003:6379"                 # Host 7003 hacia 6379 interno de cluster-node-3
     volumes:
-      - cluster_node3_data:/data
-    restart: unless-stopped
+      - cluster_node3_data:/data    # Volumen persistente del nodo 3
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  cluster-node-4:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-4
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  cluster-node-4:                   # Nodo de cluster 4 (replica)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-4  # Nombre fijo del contenedor cluster 4
+    command: ["redis-server",       # Ejecutar redis-server con cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo nodes.conf
+              "--cluster-node-timeout", "5000",   # Timeout de nodo
+              "--appendfilename", "appendonly.aof"]  # Nombre de AOF
     ports:
-      - "7004:6379"
+      - "7004:6379"                 # Host 7004 hacia 6379 interno de cluster-node-4
     volumes:
-      - cluster_node4_data:/data
-    restart: unless-stopped
+      - cluster_node4_data:/data    # Volumen persistente del nodo 4
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  cluster-node-5:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-5
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  cluster-node-5:                   # Nodo de cluster 5 (replica)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-5  # Nombre fijo del contenedor cluster 5
+    command: ["redis-server",       # Ejecutar redis-server con cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo nodes.conf
+              "--cluster-node-timeout", "5000",   # Timeout de nodo
+              "--appendfilename", "appendonly.aof"]  # Nombre de AOF
     ports:
-      - "7005:6379"
+      - "7005:6379"                 # Host 7005 hacia 6379 interno de cluster-node-5
     volumes:
-      - cluster_node5_data:/data
-    restart: unless-stopped
+      - cluster_node5_data:/data    # Volumen persistente del nodo 5
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
-  cluster-node-6:
-    image: redis:7-alpine
-    container_name: redis-m5-cluster-6
-    command: ["redis-server",
-              "--appendonly", "yes",
-              "--cluster-enabled", "yes",
-              "--cluster-config-file", "nodes.conf",
-              "--cluster-node-timeout", "5000",
-              "--appendfilename", "appendonly.aof"]
+  cluster-node-6:                   # Nodo de cluster 6 (replica)
+    image: redis:7-alpine           # Imagen de Redis
+    container_name: redis-m5-cluster-6  # Nombre fijo del contenedor cluster 6
+    command: ["redis-server",       # Ejecutar redis-server con cluster
+              "--appendonly", "yes",              # Activar AOF
+              "--cluster-enabled", "yes",         # Activar cluster
+              "--cluster-config-file", "nodes.conf",  # Archivo nodes.conf
+              "--cluster-node-timeout", "5000",   # Timeout de nodo
+              "--appendfilename", "appendonly.aof"]  # Nombre de AOF
     ports:
-      - "7006:6379"
+      - "7006:6379"                 # Host 7006 hacia 6379 interno de cluster-node-6
     volumes:
-      - cluster_node6_data:/data
-    restart: unless-stopped
+      - cluster_node6_data:/data    # Volumen persistente del nodo 6
+    restart: unless-stopped         # Política de reinicio
     networks:
-      - redis-net
+      - redis-net                   # Misma red interna
 
+# ==============================================================
+# DEFINICIÓN DE VOLÚMENES PERSISTENTES PARA TODOS LOS SERVICIOS
+# ==============================================================
 volumes:
-  redis_data:
-  redis_app_a_data:
-  redis_app_b_data:
-  redis_master_data:
-  redis_replica1_data:
-  redis_replica2_data:
-  cluster_node1_data:
-  cluster_node2_data:
-  cluster_node3_data:
-  cluster_node4_data:
-  cluster_node5_data:
-  cluster_node6_data:
+  redis_data:                       # Volumen de datos de redis base (redis-m1m3)
+  redis_app_a_data:                 # Volumen de datos de redis-app-a
+  redis_app_b_data:                 # Volumen de datos de redis-app-b
+  redis_master_data:                # Volumen de datos del master redis-m5-master
+  redis_replica1_data:              # Volumen de datos de redis-m5-replica1
+  redis_replica2_data:              # Volumen de datos de redis-m5-replica2
+  cluster_node1_data:               # Volumen de datos del cluster-node-1
+  cluster_node2_data:               # Volumen de datos del cluster-node-2
+  cluster_node3_data:               # Volumen de datos del cluster-node-3
+  cluster_node4_data:               # Volumen de datos del cluster-node-4
+  cluster_node5_data:               # Volumen de datos del cluster-node-5
+  cluster_node6_data:               # Volumen de datos del cluster-node-6
 
+# ==============================================================
+# DEFINICIÓN DE LA RED DOCKER
+# ==============================================================
 networks:
-  redis-net:
-    driver: bridge
+  redis-net:                        # Red bridge interna para todo el laboratorio
+    driver: bridge                  # Tipo de red: bridge (subred privada tipo 172.18.x.x)
